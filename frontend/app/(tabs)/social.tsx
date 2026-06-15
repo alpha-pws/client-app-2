@@ -1,8 +1,12 @@
 import { useCallback, useState } from "react";
 import {
   ActivityIndicator,
+  Alert,
   FlatList,
+  Image,
   KeyboardAvoidingView,
+  Linking,
+  Modal,
   Platform,
   ScrollView,
   StyleSheet,
@@ -14,6 +18,7 @@ import {
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useFocusEffect, useRouter } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
+import * as Contacts from "expo-contacts";
 import { api, Friend } from "@/src/api";
 import { colors, spacing, typography } from "@/src/theme";
 
@@ -34,6 +39,14 @@ export default function Social() {
   const [addEmail, setAddEmail] = useState("");
   const [adding, setAdding] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  // contacts
+  const [showContacts, setShowContacts] = useState(false);
+  const [contactsLoading, setContactsLoading] = useState(false);
+  const [contactsMatches, setContactsMatches] = useState<
+    { id: string; name: string; email: string; avatar?: string | null; friend_status?: string | null }[]
+  >([]);
+  const [contactRequesting, setContactRequesting] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     try {
@@ -76,6 +89,68 @@ export default function Social() {
   const remove = async (id: string) => {
     await api.removeFriend(id);
     load();
+  };
+
+  const importContacts = async () => {
+    setShowContacts(true);
+    setContactsLoading(true);
+    setContactsMatches([]);
+    try {
+      const perm = await Contacts.getPermissionsAsync();
+      let granted = perm.status === "granted";
+      if (!granted && perm.canAskAgain) {
+        const r = await Contacts.requestPermissionsAsync();
+        granted = r.status === "granted";
+      }
+      if (!granted) {
+        Alert.alert(
+          "Contacts Permission",
+          "Enable contacts in Settings to find friends already on ClosetAI.",
+          [
+            { text: "Open Settings", onPress: () => Linking.openSettings() },
+            { text: "Cancel", style: "cancel", onPress: () => setShowContacts(false) },
+          ],
+        );
+        setContactsLoading(false);
+        return;
+      }
+      const { data } = await Contacts.getContactsAsync({
+        fields: [Contacts.Fields.Emails, Contacts.Fields.Name, Contacts.Fields.Image],
+        pageSize: 2000,
+      });
+      const emails: string[] = [];
+      data.forEach((c) => {
+        c.emails?.forEach((e) => {
+          if (e.email) emails.push(e.email);
+        });
+      });
+      if (emails.length === 0) {
+        Alert.alert("No emails", "We couldn't find any contacts with email addresses.");
+        setContactsLoading(false);
+        return;
+      }
+      const matches = await api.lookupUsers(emails);
+      setContactsMatches(matches);
+    } catch (e: any) {
+      Alert.alert("Failed", e.message);
+    } finally {
+      setContactsLoading(false);
+    }
+  };
+
+  const inviteContact = async (email: string, userId: string) => {
+    setContactRequesting(userId);
+    try {
+      await api.sendFriendRequest(email);
+      setContactsMatches((prev) =>
+        prev.map((m) => (m.id === userId ? { ...m, friend_status: "pending" } : m)),
+      );
+      load();
+    } catch (e: any) {
+      Alert.alert("Failed", e.message);
+    } finally {
+      setContactRequesting(null);
+    }
   };
 
   const acceptedFriends = friends.filter((f) => f.status === "accepted");
@@ -140,6 +215,16 @@ export default function Social() {
               </View>
               {error && <Text style={styles.errorText}>{error}</Text>}
             </View>
+
+            <TouchableOpacity
+              testID="import-contacts-button"
+              style={styles.contactsBtn}
+              onPress={importContacts}
+            >
+              <Ionicons name="people" size={18} color={colors.primary} />
+              <Text style={styles.contactsBtnText}>Find friends from contacts</Text>
+              <Ionicons name="chevron-forward" size={16} color={colors.mutedFg} />
+            </TouchableOpacity>
 
             {outgoing.length > 0 && (
               <>
@@ -262,6 +347,65 @@ export default function Social() {
           </ScrollView>
         )}
       </KeyboardAvoidingView>
+
+      {/* Contacts modal */}
+      <Modal
+        visible={showContacts}
+        animationType="slide"
+        transparent
+        onRequestClose={() => setShowContacts(false)}
+      >
+        <View style={styles.modalBackdrop}>
+          <View style={styles.modalCard}>
+            <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between" }}>
+              <Text style={styles.modalTitle}>Contacts on ClosetAI</Text>
+              <TouchableOpacity testID="close-contacts-modal" onPress={() => setShowContacts(false)}>
+                <Ionicons name="close" size={24} color={colors.primary} />
+              </TouchableOpacity>
+            </View>
+            {contactsLoading ? (
+              <View style={{ padding: spacing.xl, alignItems: "center" }}>
+                <ActivityIndicator color={colors.primary} />
+                <Text style={[styles.emptySub, { marginTop: spacing.md }]}>Scanning your contacts…</Text>
+              </View>
+            ) : contactsMatches.length === 0 ? (
+              <View style={{ padding: spacing.xl, alignItems: "center" }}>
+                <Ionicons name="people-outline" size={56} color={colors.subtle} />
+                <Text style={styles.modalTitle}>No matches found</Text>
+                <Text style={styles.emptySub}>None of your contacts are on ClosetAI yet.</Text>
+              </View>
+            ) : (
+              <ScrollView style={{ maxHeight: 480 }}>
+                {contactsMatches.map((m) => (
+                  <View key={m.id} style={styles.friendRow} testID={`contact-match-${m.id}`}>
+                    <Avatar name={m.name} />
+                    <View style={{ flex: 1 }}>
+                      <Text style={styles.friendName}>{m.name}</Text>
+                      <Text style={styles.friendEmail}>{m.email}</Text>
+                    </View>
+                    {m.friend_status === "accepted" ? (
+                      <Text style={styles.pendingTag}>Friend</Text>
+                    ) : m.friend_status === "pending" ? (
+                      <Text style={styles.pendingTag}>Pending</Text>
+                    ) : (
+                      <TouchableOpacity
+                        testID={`contact-invite-${m.id}`}
+                        style={[styles.acceptBtn, contactRequesting === m.id && { opacity: 0.5 }]}
+                        onPress={() => inviteContact(m.email, m.id)}
+                        disabled={contactRequesting === m.id}
+                      >
+                        <Text style={styles.acceptBtnText}>
+                          {contactRequesting === m.id ? "…" : "+ Add"}
+                        </Text>
+                      </TouchableOpacity>
+                    )}
+                  </View>
+                ))}
+              </ScrollView>
+            )}
+          </View>
+        </View>
+      </Modal>
     </SafeAreaView>
   );
 }
@@ -369,6 +513,25 @@ const styles = StyleSheet.create({
   unreadText: { color: "#fff", fontWeight: "800", fontSize: 11 },
   acceptBtn: { backgroundColor: colors.primary, paddingHorizontal: 14, paddingVertical: 8 },
   acceptBtnText: { color: colors.primaryFg, fontWeight: "700", fontSize: 12, letterSpacing: 1 },
+  contactsBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: spacing.sm,
+    backgroundColor: colors.muted,
+    paddingVertical: 14,
+    paddingHorizontal: spacing.md,
+    marginBottom: spacing.lg,
+  },
+  contactsBtnText: { flex: 1, fontSize: 13, fontWeight: "700", color: colors.primary },
+  modalBackdrop: { flex: 1, backgroundColor: "rgba(0,0,0,0.5)", justifyContent: "flex-end" },
+  modalCard: {
+    backgroundColor: colors.surface,
+    padding: spacing.xl,
+    borderTopLeftRadius: 20,
+    borderTopRightRadius: 20,
+    maxHeight: "85%",
+  },
+  modalTitle: { ...typography.h1, fontSize: 22, marginBottom: spacing.sm },
   center: { flex: 1, alignItems: "center", justifyContent: "center", padding: spacing.xl },
   emptyTitle: { ...typography.h2, marginTop: spacing.md },
   emptySub: { ...typography.body, color: colors.mutedFg, textAlign: "center", marginTop: spacing.sm },

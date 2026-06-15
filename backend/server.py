@@ -917,6 +917,129 @@ async def list_threads(user: dict = Depends(get_current_user)):
 
 
 # ---------------------------------------------------------------------------
+# Contacts lookup
+# ---------------------------------------------------------------------------
+class ContactLookupBody(BaseModel):
+    emails: List[str]
+
+
+@api_router.post("/users/lookup")
+async def lookup_users_by_email(body: ContactLookupBody, user: dict = Depends(get_current_user)):
+    """Given a list of emails, return users that exist on ClosetAI (excluding self)."""
+    norm_emails = list({e.lower().strip() for e in body.emails if e})
+    if not norm_emails:
+        return []
+    docs = await db.users.find(
+        {"email": {"$in": norm_emails}, "id": {"$ne": user["id"]}},
+        {"_id": 0, "password_hash": 0},
+    ).to_list(500)
+    # Mark which are already friends
+    friendships = await db.friendships.find({"user_ids": user["id"]}, {"_id": 0}).to_list(1000)
+    friend_state: dict[str, str] = {}
+    for f in friendships:
+        other = f["requester_id"] if f["addressee_id"] == user["id"] else f["addressee_id"]
+        friend_state[other] = f["status"]
+    out = []
+    for d in docs:
+        out.append({
+            "id": d["id"],
+            "name": d["name"],
+            "email": d["email"],
+            "avatar": d.get("avatar"),
+            "friend_status": friend_state.get(d["id"]),  # None | pending | accepted
+        })
+    return out
+
+
+# ---------------------------------------------------------------------------
+# Reminders (laundry, prep clothes, etc.)
+# ---------------------------------------------------------------------------
+REMINDER_TYPES = ["laundry", "outfit_prep", "shopping", "other"]
+
+
+class ReminderCreate(BaseModel):
+    title: str
+    type: Literal["laundry", "outfit_prep", "shopping", "other"] = "other"
+    remind_at: str  # ISO datetime
+    notes: Optional[str] = None
+    event_id: Optional[str] = None
+    notification_id: Optional[str] = None  # local notification id from client
+
+
+class ReminderUpdate(BaseModel):
+    done: Optional[bool] = None
+    notification_id: Optional[str] = None
+
+
+class ReminderItem(BaseModel):
+    id: str
+    user_id: str
+    title: str
+    type: str
+    remind_at: str
+    notes: Optional[str] = None
+    event_id: Optional[str] = None
+    notification_id: Optional[str] = None
+    done: bool = False
+    created_at: str
+
+
+def _reminder_doc_to_model(d: dict) -> ReminderItem:
+    return ReminderItem(**{k: d.get(k) for k in ReminderItem.model_fields.keys()})
+
+
+@api_router.post("/reminders", response_model=ReminderItem)
+async def create_reminder(body: ReminderCreate, user: dict = Depends(get_current_user)):
+    item = {
+        "id": str(uuid.uuid4()),
+        "user_id": user["id"],
+        "title": body.title,
+        "type": body.type,
+        "remind_at": body.remind_at,
+        "notes": body.notes,
+        "event_id": body.event_id,
+        "notification_id": body.notification_id,
+        "done": False,
+        "created_at": utc_now(),
+    }
+    await db.reminders.insert_one(item)
+    return _reminder_doc_to_model(item)
+
+
+@api_router.get("/reminders", response_model=List[ReminderItem])
+async def list_reminders(user: dict = Depends(get_current_user)):
+    docs = await db.reminders.find({"user_id": user["id"]}, {"_id": 0}).sort("remind_at", 1).to_list(500)
+    return [_reminder_doc_to_model(d) for d in docs]
+
+
+@api_router.patch("/reminders/{rid}", response_model=ReminderItem)
+async def update_reminder(rid: str, body: ReminderUpdate, user: dict = Depends(get_current_user)):
+    update = {k: v for k, v in body.model_dump().items() if v is not None}
+    if not update:
+        doc = await db.reminders.find_one({"id": rid, "user_id": user["id"]}, {"_id": 0})
+        if not doc:
+            raise HTTPException(status_code=404, detail="Reminder not found")
+        return _reminder_doc_to_model(doc)
+    res = await db.reminders.find_one_and_update(
+        {"id": rid, "user_id": user["id"]},
+        {"$set": update},
+        return_document=True,
+        projection={"_id": 0},
+    )
+    if not res:
+        raise HTTPException(status_code=404, detail="Reminder not found")
+    return _reminder_doc_to_model(res)
+
+
+@api_router.delete("/reminders/{rid}")
+async def delete_reminder(rid: str, user: dict = Depends(get_current_user)):
+    res = await db.reminders.delete_one({"id": rid, "user_id": user["id"]})
+    if res.deleted_count == 0:
+        raise HTTPException(status_code=404, detail="Reminder not found")
+    return {"ok": True}
+
+
+# ---------------------------------------------------------------------------
 # Health
 # ---------------------------------------------------------------------------
 @api_router.get("/")

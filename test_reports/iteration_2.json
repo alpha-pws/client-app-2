@@ -1,0 +1,53 @@
+{
+  "summary": "Backend testing for iteration 2 of ClosetAI completed. Two new endpoint groups validated: POST /api/users/lookup (contacts lookup) and /api/reminders CRUD. 14/14 pytest cases passed (100%). Covered: empty-emails->[], unauthenticated->401, self-exclusion + presence of {id,name,email,avatar,friend_status} fields with friend_status=null for strangers, friend_status='pending' after POST /api/friends/request, friend_status='accepted' after acceptance (both sides), case-insensitive email matching. Reminders: create returns done:false with all fields persisted incl. notification_id/event_id; invalid type rejected with 422; GET list sorted ascending by remind_at and user-scoped; PATCH {done:true} and PATCH {notification_id:'xyz'} both persist; user-scoping enforced (User B's PATCH/DELETE on User A's reminder -> 404, and reminder absent from B's list); DELETE -> {ok:true} then GET no longer returns it and second DELETE -> 404; PATCH on non-existent id -> 404; unauthenticated GET/POST -> 401. Code review: server.py is now 1066 lines (was 943) and remains monolithic — recommend modularising before further additions. ContactLookupBody uses plain List[str] (no email validation) which is fine since it's matched case-insensitively against the DB and bad strings simply yield no match. Reminders correctly exclude MongoDB _id via projections and use uuid4 ids. No production bugs found in the new endpoints.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {
+        "endpoint": "POST /api/reminders",
+        "issue": "remind_at is accepted as a free-form string with no ISO-8601 validation (typed Optional[str] in Pydantic). Server stores whatever string the client sends; the asc sort on /api/reminders relies on lexicographic order of these strings. If a client sends a non-ISO value (e.g. 'tomorrow 9am'), it will sort unpredictably. Consider typing remind_at as datetime in Pydantic so FastAPI validates ISO format."
+      },
+      {
+        "endpoint": "POST /api/users/lookup",
+        "issue": "Returns plain List[dict] instead of a declared response_model. Functional but loses OpenAPI schema and Pydantic response validation. Consider adding a ContactLookupResult model."
+      }
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [],
+    "react_native_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_lookup_reminders.py",
+    "/app/test_reports/pytest/pytest_lookup_reminders.xml"
+  ],
+  "action_items": [
+    "(Optional) Type ReminderCreate.remind_at as datetime (with ISO-8601 validation) so non-ISO inputs are rejected and sort order is reliable.",
+    "(Optional) Add a response_model (e.g. List[ContactLookupResult]) to /api/users/lookup for schema clarity and validation.",
+    "(Optional) Begin splitting server.py (now 1066 lines) into modules — auth, wardrobe, outfit, wishlist, brands, events, friends, messages, contacts, reminders — to keep files under ~700 lines.",
+    "(Optional) Carry forward iteration_1 follow-up: deprecated @app.on_event('shutdown') -> FastAPI lifespan; canonical naming for /api/wishlist/{id}/compare result fields."
+  ],
+  "critical_code_review_comments": [
+    "Lookup endpoint correctly normalises emails (lower+strip), dedupes via set comprehension, and excludes the calling user with {'id': {'$ne': user['id']}}. password_hash and _id are projected out — safe.",
+    "Friend-status mapping uses friendships where calling user is in user_ids and reads doc['status']; works for both 'pending' and 'accepted' regardless of who initiated. Direction-agnostic, matches the spec.",
+    "Reminders endpoints are user-scoped at the query level ({'id': rid, 'user_id': user['id']}) on PATCH/DELETE — correct 404 leak prevention (no info disclosure to other users).",
+    "PATCH /api/reminders builds update dict by filtering None values, so partial updates (just done, just notification_id) work and don't overwrite other fields. Confirmed by tests.",
+    "Empty body PATCH path returns current doc rather than 400 — acceptable, mirrors wardrobe PATCH pattern.",
+    "GET /api/reminders sorts by remind_at asc as specified. With ISO-8601 strings this is correct lexicographically; if remind_at is allowed to be any string, sort order could be wrong (see minor issue)."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_lookup_reminders.py (created)",
+    "/app/test_reports/pytest/pytest_lookup_reminders.xml (generated)"
+  ],
+  "success_rate": {
+    "backend": "100% (14/14)",
+    "frontend": "not tested (backend-only request)"
+  },
+  "seed_data_creation": "Five fresh users created via signup with TEST_ prefixed emails @closetai.com: TEST_lookup_a_*, TEST_lookup_b_*, TEST_lookup_c_*, TEST_rem_owner_*, TEST_rem_other_*. A friendship between lookup_a and lookup_b is left in 'accepted' state. Several reminders created/deleted under rem_owner; a couple remain (done=True) — all identifiable by 'TEST ' title prefix. No global teardown.",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Pytest file /app/backend/tests/test_lookup_reminders.py runs in ~3s and is independent from iteration 1's test_closetai_backend.py. NOTE: Pydantic EmailStr rejects .test/.local/.example reserved TLDs — use @closetai.com (or another real-looking domain) for signup payloads. Module-scoped user fixtures share state across TestContactsLookup classes (a/b/c) so the pending->accepted transition test ordering matters; if you split, reseed friendships. Reminders test stashes ids on the class (TestReminders._rid_*) so PATCH/DELETE tests assume the create test ran first — pytest's default file order preserves this. EXPO_PUBLIC_BACKEND_URL must be exported when running pytest from /app.",
+  "rca_of_issue": "No bugs to RCA. Initial test run had a test-side bug only: domain @closetai.test is rejected by Pydantic's email-validator (reserved TLD). Fixed by switching test signup emails to @closetai.com. After the fix, all 14 cases passed on the first re-run."
+}

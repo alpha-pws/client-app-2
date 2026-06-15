@@ -12,7 +12,8 @@
       "supportsTablet": true,
       "infoPlist": {
         "NSCameraUsageDescription": "Take photos of your clothes",
-        "NSPhotoLibraryUsageDescription": "Pick clothing photos from your gallery"
+        "NSPhotoLibraryUsageDescription": "Pick clothing photos from your gallery",
+        "NSContactsUsageDescription": "Find friends already on ClosetAI from your contacts"
       }
     },
     "android": {
@@ -21,7 +22,12 @@
         "backgroundColor": "#FAFAFA"
       },
       "edgeToEdgeEnabled": true,
-      "permissions": ["CAMERA", "READ_MEDIA_IMAGES", "READ_EXTERNAL_STORAGE"]
+      "permissions": [
+        "CAMERA",
+        "READ_MEDIA_IMAGES",
+        "READ_EXTERNAL_STORAGE",
+        "READ_CONTACTS"
+      ]
     },
     "web": {
       "bundler": "metro",
@@ -52,7 +58,20 @@
         {
           "cameraPermission": "ClosetAI uses your camera to capture clothing photos."
         }
-      ]
+      ],
+      [
+        "expo-contacts",
+        {
+          "contactsPermission": "ClosetAI scans your contacts to find friends already on the app."
+        }
+      ],
+      [
+        "expo-notifications",
+        {
+          "color": "#0A0A0A"
+        }
+      ],
+      "@react-native-community/datetimepicker"
     ],
     "experiments": {
       "typedRoutes": true

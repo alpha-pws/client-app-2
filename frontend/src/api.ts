@@ -100,6 +100,19 @@ export type Message = {
   read: boolean;
 };
 
+export type Reminder = {
+  id: string;
+  user_id: string;
+  title: string;
+  type: "laundry" | "outfit_prep" | "shopping" | "other";
+  remind_at: string;
+  notes?: string | null;
+  event_id?: string | null;
+  notification_id?: string | null;
+  done: boolean;
+  created_at: string;
+};
+
 export async function setSession(token: string, user: User) {
   await storage.secureSet(TOKEN_KEY, token);
   await storage.setItem(USER_KEY, JSON.stringify(user));
@@ -269,4 +282,31 @@ export const api = {
     request<Message[]>(`/messages/${friendUserId}`),
   sendMessage: (body: { to_user_id: string; text: string; recommended_item_id?: string }) =>
     request<Message>("/messages", { method: "POST", body }),
+
+  // contacts lookup
+  lookupUsers: (emails: string[]) =>
+    request<
+      {
+        id: string;
+        name: string;
+        email: string;
+        avatar?: string | null;
+        friend_status?: "pending" | "accepted" | null;
+      }[]
+    >("/users/lookup", { method: "POST", body: { emails } }),
+
+  // reminders
+  listReminders: () => request<Reminder[]>("/reminders"),
+  addReminder: (body: {
+    title: string;
+    type: "laundry" | "outfit_prep" | "shopping" | "other";
+    remind_at: string;
+    notes?: string;
+    event_id?: string;
+    notification_id?: string;
+  }) => request<Reminder>("/reminders", { method: "POST", body }),
+  updateReminder: (id: string, body: { done?: boolean; notification_id?: string }) =>
+    request<Reminder>(`/reminders/${id}`, { method: "PATCH", body }),
+  deleteReminder: (id: string) =>
+    request<{ ok: true }>(`/reminders/${id}`, { method: "DELETE" }),
 };
