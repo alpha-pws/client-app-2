@@ -1,0 +1,104 @@
+{
+  "theme_and_archetype": {
+    "theme": "LIGHT",
+    "archetype": "4 (Swiss & High-Contrast)",
+    "reasoning": "ClosetAI requires high-fashion aesthetics paired with utility. The Swiss & High-Contrast archetype provides a minimalist, editorial backdrop (like a Vogue magazine) that lets the user's clothing take center stage. 95% monochrome with stark black and white, using Signal Red strictly for alerts, price drops, or destructive actions."
+  },
+  "colors": {
+    "background": "#FAFAFA",
+    "surface": "#FFFFFF",
+    "primary": "#0A0A0A",
+    "primary_foreground": "#FFFFFF",
+    "secondary": "#E5E5E5",
+    "secondary_foreground": "#0A0A0A",
+    "accent": "#FF3B30",
+    "accent_foreground": "#FFFFFF",
+    "muted": "#F5F5F5",
+    "muted_foreground": "#737373",
+    "border": "#E5E5E5",
+    "input": "#E5E5E5"
+  },
+  "typography": {
+    "font_families": {
+      "heading": "Outfit, sans-serif",
+      "body": "IBM Plex Sans, sans-serif"
+    },
+    "hierarchy": {
+      "h1": "text-4xl font-black tracking-tighter text-[#0A0A0A]",
+      "h2": "text-2xl font-bold tracking-tight text-[#0A0A0A]",
+      "h3": "text-xl font-semibold tracking-tight text-[#0A0A0A]",
+      "body": "text-base font-normal leading-relaxed text-[#0A0A0A]",
+      "small_label": "text-xs font-bold uppercase tracking-[0.2em] text-[#737373]"
+    }
+  },
+  "layout_and_spacing": {
+    "global": "Mobile-first approach. Use generous padding (p-6, p-8) around main containers. No center-alignment for text unless in an empty state.",
+    "navigation": "Bottom tab navigation with 5 tabs (Wardrobe, Outfits, Wishlist, Calendar, Profile). The tab bar should have a solid #FFFFFF background with a 1px top border (#E5E5E5). Active icon in #0A0A0A, inactive in #A3A3A3.",
+    "wardrobe_grid": "Bento-style grid. 2 columns (grid-cols-2) with tight gap-4. Items should have sharp corners or max rounded-md. Image should fill the container.",
+    "card_style": "Flat, 1px solid border (#E5E5E5), NO box-shadows. Background #FFFFFF. Sharp corners (rounded-none) or very subtle (rounded-sm) to maintain the Swiss Brutalist feel."
+  },
+  "components": {
+    "buttons": {
+      "primary": "bg-[#0A0A0A] text-[#FFFFFF] rounded-none px-6 py-4 font-bold tracking-wide active:scale-95 transition-transform",
+      "secondary": "bg-transparent border border-[#0A0A0A] text-[#0A0A0A] rounded-none px-6 py-4 font-bold tracking-wide active:scale-95 transition-transform",
+      "ghost": "text-[#0A0A0A] hover:bg-[#F5F5F5] rounded-none px-4 py-2"
+    },
+    "inputs": {
+      "text_field": "border-b border-[#0A0A0A] bg-transparent rounded-none px-0 py-3 text-base focus:outline-none focus:border-b-2 placeholder:text-[#737373]"
+    },
+    "ai_chat": {
+      "container": "Flex-col, full height. Background #FAFAFA.",
+      "user_bubble": "bg-[#0A0A0A] text-[#FFFFFF] p-4 rounded-tl-2xl rounded-tr-2xl rounded-bl-2xl rounded-br-none self-end max-w-[80%]",
+      "ai_bubble": "bg-[#FFFFFF] border border-[#E5E5E5] text-[#0A0A0A] p-4 rounded-tl-2xl rounded-tr-2xl rounded-bl-none rounded-br-2xl self-start max-w-[80%]",
+      "quick_replies": "flex gap-2 overflow-x-auto py-2. Pills: border border-[#0A0A0A] rounded-full px-4 py-2 text-sm whitespace-nowrap"
+    },
+    "wishlist_item": {
+      "container": "flex row gap-4 p-4 border-b border-[#E5E5E5] items-center",
+      "price_tag": "text-[#FF3B30] font-bold"
+    },
+    "calendar_event": {
+      "container": "border-l-4 border-[#0A0A0A] bg-[#FFFFFF] p-4 my-2",
+      "date": "text-xs font-bold uppercase tracking-[0.2em] text-[#737373]"
+    }
+  },
+  "testing": {
+    "instructions": "All interactive and key informational elements MUST include a 'data-testid' attribute using kebab-case, role-based naming (e.g., 'data-testid=\"login-submit-button\"')."
+  },
+  "media": {
+    "onboarding": [
+      {
+        "url": "https://images.unsplash.com/photo-1571513800374-df1bbe650e56?crop=entropy&cs=srgb&fm=jpg&ixid=M3w3NDQ2NDJ8MHwxfHNlYXJjaHwzfHxjaGljJTIwbWluaW1hbCUyMGZhc2hpb24lMjBlZGl0b3JpYWwlMjBtb2RlbHxlbnwwfHx8fDE3ODE1MTU1MjN8MA&ixlib=rb-4.1.0&q=85",
+        "description": "Chic minimal fashion model (use for Welcome / Onboarding Screen 1)"
+      },
+      {
+        "url": "https://images.unsplash.com/photo-1613915617430-8ab0fd7c6baf?crop=entropy&cs=srgb&fm=jpg&ixid=M3w3NDQ2NDJ8MHwxfHNlYXJjaHwxfHxjaGljJTIwbWluaW1hbCUyMGZhc2hpb24lMjBlZGl0b3JpYWwlMjBtb2RlbHxlbnwwfHx8fDE3ODE1MTU1MjN8MA&ixlib=rb-4.1.0&q=85",
+        "description": "Fashion editorial model (use for Onboarding Screen 2)"
+      }
+    ],
+    "wardrobe_placeholders": [
+      {
+        "url": "https://images.unsplash.com/photo-1621198059871-0d5f9b449233?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NjA1NzR8MHwxfHNlYXJjaHwzfHxtaW5pbWFsaXN0JTIwY2xvdGhpbmclMjBpdGVtJTIwd2hpdGUlMjBiYWNrZ3JvdW5kfGVufDB8fHx8MTc4MTUxNTUyM3ww&ixlib=rb-4.1.0&q=85",
+        "description": "White knit sweater on flat surface (use for Tops category placeholder)"
+      },
+      {
+        "url": "https://images.unsplash.com/photo-1708523842501-1619478cea1f?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NjA1NzR8MHwxfHNlYXJjaHw0fHxtaW5pbWFsaXN0JTIwY2xvdGhpbmclMjBpdGVtJTIwd2hpdGUlMjBiYWNrZ3JvdW5kfGVufDB8fHx8MTc4MTUxNTUyM3ww&ixlib=rb-4.1.0&q=85",
+        "description": "Jeans on white background (use for Bottoms category placeholder)"
+      }
+    ],
+    "empty_states": [
+      {
+        "url": "https://images.unsplash.com/photo-1612314577630-bafc881d211f?crop=entropy&cs=srgb&fm=jpg&ixid=M3w3NTY2NjZ8MHwxfHNlYXJjaHwyfHxibGFuayUyMHNtYXJ0cGhvbmUlMjBzY3JlZW4lMjBtb2NrdXAlMjBmbGF0JTIwbGF5fGVufDB8fHx8MTc4MTUxNTUyM3ww&ixlib=rb-4.1.0&q=85",
+        "description": "Blank smartphone layout (use as a background or visual for empty calendar/wishlist states)"
+      }
+    ]
+  },
+  "instructions_to_main_agent": [
+    "Strictly follow the color palette. Do NOT introduce new blues or purples. Use #FF3B30 only for alerts or sales.",
+    "Use Outfit for all headings, keep tracking tight. Use IBM Plex Sans for body text.",
+    "Avoid standard card shadows. Use 1px borders instead for a high-fashion, technical look.",
+    "Implement a 5-tab bottom navigation bar for mobile-first layout. Avoid hamburger menus for primary navigation.",
+    "Ensure all interactive elements have data-testid attributes for testing.",
+    "For the AI Chat, implement a full-screen mobile view, not a floating widget. Use clear chat bubbles with high contrast.",
+    "Please read /app/design_guidelines.json thoroughly before creating UI components."
+  ]
+}
