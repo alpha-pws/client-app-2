@@ -31,7 +31,7 @@ export default function Login() {
     setError(null);
     try {
       await login(email.trim(), password);
-      router.replace("/(tabs)/wardrobe");
+      router.replace("/welcome");
     } catch (e: any) {
       setError(e.message || "Login failed");
     } finally {
