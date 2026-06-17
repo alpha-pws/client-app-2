@@ -1,104 +1,190 @@
 {
+  "project": "ClosetAI Redesign",
   "theme_and_archetype": {
-    "theme": "LIGHT",
-    "archetype": "4 (Swiss & High-Contrast)",
-    "reasoning": "ClosetAI requires high-fashion aesthetics paired with utility. The Swiss & High-Contrast archetype provides a minimalist, editorial backdrop (like a Vogue magazine) that lets the user's clothing take center stage. 95% monochrome with stark black and white, using Signal Red strictly for alerts, price drops, or destructive actions."
+    "theme": "Light",
+    "archetype": "Archetype 1 (Organic & Earthy) + Archetype 5 (Luxury) Hybrid",
+    "description": "A vibrant, image-rich, Pinterest-style editorial layout. Replaces the clinical black-and-white look with warm creams, deep wine red accents, soft shadows, and expressive typography."
   },
-  "colors": {
-    "background": "#FAFAFA",
-    "surface": "#FFFFFF",
-    "primary": "#0A0A0A",
-    "primary_foreground": "#FFFFFF",
-    "secondary": "#E5E5E5",
-    "secondary_foreground": "#0A0A0A",
-    "accent": "#FF3B30",
-    "accent_foreground": "#FFFFFF",
-    "muted": "#F5F5F5",
-    "muted_foreground": "#737373",
-    "border": "#E5E5E5",
-    "input": "#E5E5E5"
+  "color_palette": {
+    "background": {
+      "default": "#FAF9F6",
+      "paper": "#FFFFFF",
+      "subtle": "#F5F2EA",
+      "overlay": "rgba(255, 255, 255, 0.2)"
+    },
+    "accent": {
+      "primary": "#6A1E2F",
+      "secondary": "#E8A598",
+      "highlight": "#D6C3A7"
+    },
+    "text": {
+      "primary": "#1A1A1A",
+      "secondary": "#6B655E",
+      "inverse": "#FFFFFF",
+      "accent": "#6A1E2F"
+    },
+    "border": {
+      "default": "#EAE4D9",
+      "focus": "#6A1E2F"
+    },
+    "status": {
+      "success": "#2D6A4F",
+      "warning": "#D4A373",
+      "error": "#9D0208"
+    }
   },
   "typography": {
-    "font_families": {
-      "heading": "Outfit, sans-serif",
-      "body": "IBM Plex Sans, sans-serif"
+    "font_family": {
+      "heading": "Cormorant Garamond, serif",
+      "body": "Outfit, sans-serif"
     },
     "hierarchy": {
-      "h1": "text-4xl font-black tracking-tighter text-[#0A0A0A]",
-      "h2": "text-2xl font-bold tracking-tight text-[#0A0A0A]",
-      "h3": "text-xl font-semibold tracking-tight text-[#0A0A0A]",
-      "body": "text-base font-normal leading-relaxed text-[#0A0A0A]",
-      "small_label": "text-xs font-bold uppercase tracking-[0.2em] text-[#737373]"
+      "h1_hero": {
+        "size": "3rem",
+        "weight": "bold",
+        "tracking": "-0.02em",
+        "line_height": "1"
+      },
+      "h2_section": {
+        "size": "1.875rem",
+        "weight": "600",
+        "tracking": "-0.01em",
+        "line_height": "1.2"
+      },
+      "h3_card": {
+        "size": "1.25rem",
+        "weight": "500",
+        "tracking": "normal",
+        "line_height": "1.4"
+      },
+      "body_large": {
+        "size": "1.125rem",
+        "weight": "400",
+        "tracking": "normal",
+        "line_height": "1.6"
+      },
+      "body_base": {
+        "size": "1rem",
+        "weight": "400",
+        "tracking": "normal",
+        "line_height": "1.5"
+      },
+      "label_small": {
+        "size": "0.75rem",
+        "weight": "500",
+        "tracking": "0.05em",
+        "line_height": "1",
+        "text_transform": "uppercase"
+      }
     }
   },
-  "layout_and_spacing": {
-    "global": "Mobile-first approach. Use generous padding (p-6, p-8) around main containers. No center-alignment for text unless in an empty state.",
-    "navigation": "Bottom tab navigation with 5 tabs (Wardrobe, Outfits, Wishlist, Calendar, Profile). The tab bar should have a solid #FFFFFF background with a 1px top border (#E5E5E5). Active icon in #0A0A0A, inactive in #A3A3A3.",
-    "wardrobe_grid": "Bento-style grid. 2 columns (grid-cols-2) with tight gap-4. Items should have sharp corners or max rounded-md. Image should fill the container.",
-    "card_style": "Flat, 1px solid border (#E5E5E5), NO box-shadows. Background #FFFFFF. Sharp corners (rounded-none) or very subtle (rounded-sm) to maintain the Swiss Brutalist feel."
+  "spacing_and_layout": {
+    "container_padding": "1.5rem",
+    "section_gap": "2rem",
+    "item_gap": "1rem",
+    "border_radius": {
+      "sm": "0.5rem",
+      "md": "0.75rem",
+      "lg": "1rem",
+      "xl": "1.5rem",
+      "full": "9999px"
+    },
+    "shadows": {
+      "soft_ambient": "0 8px 30px rgba(0,0,0,0.04)",
+      "card_lift": "0 12px 40px rgba(0,0,0,0.08)"
+    }
   },
   "components": {
-    "buttons": {
-      "primary": "bg-[#0A0A0A] text-[#FFFFFF] rounded-none px-6 py-4 font-bold tracking-wide active:scale-95 transition-transform",
-      "secondary": "bg-transparent border border-[#0A0A0A] text-[#0A0A0A] rounded-none px-6 py-4 font-bold tracking-wide active:scale-95 transition-transform",
-      "ghost": "text-[#0A0A0A] hover:bg-[#F5F5F5] rounded-none px-4 py-2"
+    "wardrobe_grid": {
+      "layout": "Masonry/Staggered 2-column layout.",
+      "card_style": "Image fills the container with xl (1.5rem) border-radius. Include a slim translucent overlay (backdrop-blur with white tint) at the bottom for title/brand, and a small floating heart/save icon in the top right.",
+      "filter_chips": "Horizontal scroll view, fully rounded pills. Unselected: Pure white background with subtle border. Selected: Deep burgundy background with white text."
     },
-    "inputs": {
-      "text_field": "border-b border-[#0A0A0A] bg-transparent rounded-none px-0 py-3 text-base focus:outline-none focus:border-b-2 placeholder:text-[#737373]"
+    "ai_stylist_chat": {
+      "layout": "Chat interface heavily leaning into visual elements, moving away from plain text bubbles.",
+      "outfit_boards": "Rich visual collage cards. Use a Bento-box style grid within the chat feed. Example: A hero image of a suggested outfit, paired with 2-3 small square thumbnails of accessories below it.",
+      "bot_avatar": "Aesthetic minimal icon or an elegant logo piece, avoiding generic robot emojis."
     },
-    "ai_chat": {
-      "container": "Flex-col, full height. Background #FAFAFA.",
-      "user_bubble": "bg-[#0A0A0A] text-[#FFFFFF] p-4 rounded-tl-2xl rounded-tr-2xl rounded-bl-2xl rounded-br-none self-end max-w-[80%]",
-      "ai_bubble": "bg-[#FFFFFF] border border-[#E5E5E5] text-[#0A0A0A] p-4 rounded-tl-2xl rounded-tr-2xl rounded-bl-none rounded-br-2xl self-start max-w-[80%]",
-      "quick_replies": "flex gap-2 overflow-x-auto py-2. Pills: border border-[#0A0A0A] rounded-full px-4 py-2 text-sm whitespace-nowrap"
+    "calendar": {
+      "layout": "Card-based dashboard utilizing the soft_ambient shadow.",
+      "month_grid": "Clean, airy grid with a circular highlight (burgundy) for today, and small accent dots under dates for planned outfits.",
+      "reminders": "Stacked horizontal cards featuring a prominent icon on the left, title/time in the center, and a right chevron. Use generous padding.",
+      "countdown": "A prominent hero card showing days until the next major event, utilizing a background image of the planned outfit with a translucent overlay."
     },
-    "wishlist_item": {
-      "container": "flex row gap-4 p-4 border-b border-[#E5E5E5] items-center",
-      "price_tag": "text-[#FF3B30] font-bold"
+    "social": {
+      "friends_list": "Horizontal scroll of avatar circles.",
+      "closet_view": "Profile header seamlessly transitioning into a staggered masonry grid for shared clothing.",
+      "messaging": "Clean, editorial layout. Shared items show as rich image cards rather than inline links."
     },
-    "calendar_event": {
-      "container": "border-l-4 border-[#0A0A0A] bg-[#FFFFFF] p-4 my-2",
-      "date": "text-xs font-bold uppercase tracking-[0.2em] text-[#737373]"
+    "profile": {
+      "layout": "Split view or tabbed bento-card layout.",
+      "wishlist": "Pinterest-style grid. Cards include AI price drop alerts styled as small, high-contrast labels (e.g., burgundy background).",
+      "brands": "Grid of rounded square logos displayed on pure white cards with soft shadows."
+    },
+    "bottom_tab_bar": {
+      "style": "Floating pill shape, elevated with soft_ambient shadow, detached from the bottom edge of the screen by at least 16px.",
+      "items": "Inactive: Icon only. Active: Icon + Label wrapped in a pill background (subtle cream) to indicate selection.",
+      "icons": "Clean stroke icons (e.g., Lucide or Feather), 24px, 1.5px stroke weight."
+    },
+    "empty_states_and_onboarding": {
+      "visuals": "Generous negative space. Use aesthetic placeholder photography (like hanging clothes on a rack) instead of generic illustrations. Must include a clear, pill-shaped primary CTA.",
+      "typography": "Large H2 heading, centered, with body_large text underneath."
     }
   },
-  "testing": {
-    "instructions": "All interactive and key informational elements MUST include a 'data-testid' attribute using kebab-case, role-based naming (e.g., 'data-testid=\"login-submit-button\"')."
+  "motion_and_interactions": {
+    "page_transitions": "Smooth fade and slight scale-up.",
+    "card_press": "Scale down slightly (0.98) to mimic a tactile press.",
+    "masonry_load": "Staggered fade-up animation based on index."
   },
-  "media": {
-    "onboarding": [
+  "testing_attributes": {
+    "convention": "data-testid",
+    "rule": "All interactive and key informational elements MUST include a data-testid attribute.",
+    "examples": [
+      "data-testid='wardrobe-masonry-grid'",
+      "data-testid='ai-stylist-outfit-card'",
+      "data-testid='bottom-tab-wardrobe'",
+      "data-testid='filter-chip-tops'"
+    ]
+  },
+  "media_and_assets": {
+    "wardrobe_images": [
       {
-        "url": "https://images.unsplash.com/photo-1571513800374-df1bbe650e56?crop=entropy&cs=srgb&fm=jpg&ixid=M3w3NDQ2NDJ8MHwxfHNlYXJjaHwzfHxjaGljJTIwbWluaW1hbCUyMGZhc2hpb24lMjBlZGl0b3JpYWwlMjBtb2RlbHxlbnwwfHx8fDE3ODE1MTU1MjN8MA&ixlib=rb-4.1.0&q=85",
-        "description": "Chic minimal fashion model (use for Welcome / Onboarding Screen 1)"
+        "url": "https://images.unsplash.com/photo-1509319117193-57bab727e09d?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NjA2ODl8MHwxfHNlYXJjaHwxfHx3YXJkcm9iZSUyMGNsb3NldCUyMGNsb3RoZXMlMjBoYW5naW5nfGVufDB8fHx8MTc4MTY2MTY2Nnww&ixlib=rb-4.1.0&q=85",
+        "description": "clothes hanging on white rack",
+        "usage": "Empty state or placeholder for Wardrobe grid"
       },
       {
-        "url": "https://images.unsplash.com/photo-1613915617430-8ab0fd7c6baf?crop=entropy&cs=srgb&fm=jpg&ixid=M3w3NDQ2NDJ8MHwxfHNlYXJjaHwxfHxjaGljJTIwbWluaW1hbCUyMGZhc2hpb24lMjBlZGl0b3JpYWwlMjBtb2RlbHxlbnwwfHx8fDE3ODE1MTU1MjN8MA&ixlib=rb-4.1.0&q=85",
-        "description": "Fashion editorial model (use for Onboarding Screen 2)"
+        "url": "https://images.unsplash.com/photo-1609709295948-17d77cb2a69b?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NjA2ODl8MHwxfHNlYXJjaHwzfHx3YXJkcm9iZSUyMGNsb3NldCUyMGNsb3RoZXMlMjBoYW5naW5nfGVufDB8fHx8MTc4MTY2MTY2Nnww&ixlib=rb-4.1.0&q=85",
+        "description": "black and white floral long sleeve shirt",
+        "usage": "Clothing item mock"
       }
     ],
-    "wardrobe_placeholders": [
+    "fashion_outfits": [
       {
-        "url": "https://images.unsplash.com/photo-1621198059871-0d5f9b449233?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NjA1NzR8MHwxfHNlYXJjaHwzfHxtaW5pbWFsaXN0JTIwY2xvdGhpbmclMjBpdGVtJTIwd2hpdGUlMjBiYWNrZ3JvdW5kfGVufDB8fHx8MTc4MTUxNTUyM3ww&ixlib=rb-4.1.0&q=85",
-        "description": "White knit sweater on flat surface (use for Tops category placeholder)"
+        "url": "https://images.unsplash.com/photo-1634921276069-c24ba5d6b35c?crop=entropy&cs=srgb&fm=jpg&ixid=M3w3NTY2Nzd8MHwxfHNlYXJjaHwzfHxmYXNoaW9uJTIwbW9kZWwlMjBvdXRmaXQlMjBzdHJlZXQlMjBzdHlsZXxlbnwwfHx8fDE3ODE2NjE2NjZ8MA&ixlib=rb-4.1.0&q=85",
+        "description": "a man and a woman walking down the street",
+        "usage": "AI Stylist outfit board hero image"
       },
       {
-        "url": "https://images.unsplash.com/photo-1708523842501-1619478cea1f?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NjA1NzR8MHwxfHNlYXJjaHw0fHxtaW5pbWFsaXN0JTIwY2xvdGhpbmclMjBpdGVtJTIwd2hpdGUlMjBiYWNrZ3JvdW5kfGVufDB8fHx8MTc4MTUxNTUyM3ww&ixlib=rb-4.1.0&q=85",
-        "description": "Jeans on white background (use for Bottoms category placeholder)"
+        "url": "https://images.unsplash.com/photo-1731589802956-b4693dae884b?crop=entropy&cs=srgb&fm=jpg&ixid=M3w3NTY2Nzd8MHwxfHNlYXJjaHwyfHxmYXNoaW9uJTIwbW9kZWwlMjBvdXRmaXQlMjBzdHJlZXQlMjBzdHlsZXxlbnwwfHx8fDE3ODE2NjE2NjZ8MA&ixlib=rb-4.1.0&q=85",
+        "description": "A man in a black coat and red shirt",
+        "usage": "AI Stylist outfit board hero image"
       }
     ],
-    "empty_states": [
+    "user_avatars": [
       {
-        "url": "https://images.unsplash.com/photo-1612314577630-bafc881d211f?crop=entropy&cs=srgb&fm=jpg&ixid=M3w3NTY2NjZ8MHwxfHNlYXJjaHwyfHxibGFuayUyMHNtYXJ0cGhvbmUlMjBzY3JlZW4lMjBtb2NrdXAlMjBmbGF0JTIwbGF5fGVufDB8fHx8MTc4MTUxNTUyM3ww&ixlib=rb-4.1.0&q=85",
-        "description": "Blank smartphone layout (use as a background or visual for empty calendar/wishlist states)"
+        "url": "https://images.unsplash.com/photo-1534528741775-53994a69daeb?crop=entropy&cs=srgb&fm=jpg&ixid=M3w3NDk1ODF8MHwxfHNlYXJjaHwxfHx1c2VyJTIwYXZhdGFyJTIwcG9ydHJhaXQlMjBhZXN0aGV0aWN8ZW58MHx8fHwxNzgxNjYxNjY2fDA&ixlib=rb-4.1.0&q=85",
+        "description": "woman wearing black crew-neck shirt",
+        "usage": "User profile or friend avatar"
       }
     ]
   },
   "instructions_to_main_agent": [
-    "Strictly follow the color palette. Do NOT introduce new blues or purples. Use #FF3B30 only for alerts or sales.",
-    "Use Outfit for all headings, keep tracking tight. Use IBM Plex Sans for body text.",
-    "Avoid standard card shadows. Use 1px borders instead for a high-fashion, technical look.",
-    "Implement a 5-tab bottom navigation bar for mobile-first layout. Avoid hamburger menus for primary navigation.",
-    "Ensure all interactive elements have data-testid attributes for testing.",
-    "For the AI Chat, implement a full-screen mobile view, not a floating widget. Use clear chat bubbles with high contrast.",
-    "Please read /app/design_guidelines.json thoroughly before creating UI components."
+    "Use standard React Native View and Text components, utilizing styling that mimics the provided design tokens.",
+    "Implement the wardrobe grid using a staggered or masonry layout component (e.g. react-native-masonry-list or flex wrap).",
+    "Replace generic chat bubbles in the AI stylist with detailed layout views (Outfit Boards) featuring layered images.",
+    "Ensure all backgrounds map to the 'Warm Cream Off-White' (#FAF9F6) and not pure black or white.",
+    "Ensure the floating bottom tab bar does not stretch edge-to-edge; apply a horizontal margin and padding with the defined shadow.",
+    "Apply data-testid to every TouchableOpacity, Pressable, Button, or interactive View."
   ]
 }
