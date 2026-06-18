@@ -618,6 +618,8 @@ async def compare_wishlist_prices(item_id: str, user: dict = Depends(get_current
     }
     await db.wishlist.update_one({"id": item_id, "user_id": user["id"]}, {"$set": item_update})
     updated = await db.wishlist.find_one({"id": item_id, "user_id": user["id"]}, {"_id": 0})
+    if not updated:
+        raise HTTPException(status_code=404, detail="Item not found")
     return _wish_doc_to_model(updated)
 
 
