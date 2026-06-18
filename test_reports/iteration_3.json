@@ -1,0 +1,60 @@
+{
+  "summary": "Iteration 3 backend tests passed 16/16 (100%) covering: (1) password reset OTP flow via Resend with dev-log fallback, (2) custom wardrobe categories, (3) AI stylist endpoint contract. Verified: /api/auth/forgot returns {ok:true} for unknown email (no enumeration) and for known email (OTP scraped from /var/log/supervisor/backend.err.log 'OTP for <email> (dev fallback): <code>'); cooldown_seconds appears on second call within 45s; /api/auth/verify-otp returns 400 'Invalid code' for wrong codes and locks (429) after 5 wrong attempts; correct OTP returns a 3-part JWT reset_token; /api/auth/reset updates password (login with new pw works, old pw -> 401), single-use (second reset with same token -> 400), and rejects malformed/empty tokens with 400. Categories: GET returns 19 built-ins (with built_in=true) plus user customs; auth required (401); POST is idempotent on duplicate name (returns same slugified id); POST 'Tops' -> 409 (built-in collision); DELETE built-in 'tops' -> 400; DELETE user category from owner -> 200, from another user -> 404, repeat delete -> 404. Wardrobe accepts custom category id as a free-form string; empty category -> 422. /api/outfit/chat contract honored: returns {reply, session_id, recommended_item_ids[]} (reply is non-empty string from Claude sonnet-4-6). Baseline test user password was rotated during the single-use reset test and RESTORED to 'test1234' at the end (confirmed via final login). Resend test-mode confirmed in logs: real send raises 'You can only send testing emails to your own email address (aadyap17@gmail.com)' and code path falls back to logger.info as documented.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {
+        "endpoint": "POST /api/auth/forgot",
+        "issue": "Cooldown check considers ANY pending record (status='pending') as the last send, but the cooldown handler does NOT supersede/invalidate previous OTPs (the supersede branch only runs after the cooldown check returns). Result: while cooldown is active, the previously issued OTP remains live, which is acceptable. However, if a user manages to bypass cooldown via two near-simultaneous requests, only one is recorded due to the supersede pass that follows. Behaviour-correct, but the ordering is subtle — consider commenting the intent."
+      },
+      {
+        "endpoint": "POST /api/auth/verify-otp",
+        "issue": "Attempts counter is incremented BEFORE the >=5 check on the next call, so the boundary is 'after 5 wrong attempts, the 6th wrong attempt returns 429 and locks'. Spec says 'after 5 wrong attempts the record is locked (429)'. Current behaviour matches that exact wording (5 wrong replies with 400, then locked on the 6th call). Documented in tests."
+      },
+      {
+        "endpoint": "Email delivery",
+        "issue": "Resend is hard-locked to aadyap17@gmail.com in test mode. Every forgot-password call for any other email triggers a logged ResendError stack trace in backend.err.log. Not a bug, but production needs a verified domain + RESEND_FROM update."
+      }
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [],
+    "react_native_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iter3_auth_categories.py",
+    "/app/test_reports/pytest/pytest_iter3.xml"
+  ],
+  "action_items": [
+    "(Optional) Add a verified Resend domain and update RESEND_FROM so real users receive OTP emails — currently only aadyap17@gmail.com gets the email; everyone else relies on the server log fallback.",
+    "(Optional) Type ResetPasswordBody.new_password validation to also forbid the same hash as the current password (currently you can reset to the same password).",
+    "(Optional) Add rate limiting on /api/auth/verify-otp by IP (currently per-record only — five wrongs across many emails are independent).",
+    "(Optional) Carry forward from prior iterations: split server.py (now ~1349 lines) into modules; migrate @app.on_event('shutdown') to FastAPI lifespan.",
+    "(Optional) Add response_model declarations on /api/auth/forgot, /api/auth/verify-otp, /api/auth/reset for OpenAPI clarity (currently return plain dicts)."
+  ],
+  "critical_code_review_comments": [
+    "OTP is stored as a salted SHA-256 hash (JWT_SECRET prefix) and compared with hmac.compare_digest — constant-time, no plaintext OTP at rest. Good.",
+    "reset_token is a 10-minute JWT carrying purpose='password_reset' and the password_resets row id (rid). reset() verifies status=='verified' on the row before honoring the token; status is flipped to 'used' atomically after the password update — that makes the token genuinely single-use even if the JWT itself hasn't expired. Verified by test.",
+    "forgot_password supersedes prior pending OTPs before inserting a new one (only after the cooldown check passes), so a successful new OTP invalidates earlier ones. Correct.",
+    "Email enumeration: response is exactly {ok:true} for unknown emails and {ok:true} (plus optional cooldown_seconds) for known emails. The cooldown_seconds field IS an enumeration side-channel — an attacker can probe whether an email recently requested a reset. Minor leak; documented but not blocking.",
+    "/api/categories list response is built locally from BUILT_IN_CATEGORIES + db.user_categories — no _id leak, response_model enforced. slugify is deterministic and bounded to 40 chars.",
+    "Idempotent category create: looks up by (user_id, id=slug) before insert — returns existing record without conflict. Verified.",
+    "POST /api/wardrobe now accepts any non-empty string up to 40 chars for category (Pydantic constraint). Does NOT enforce the category exists in user_categories or BUILT_IN_CATEGORY_IDS — this is intentional per the spec ('accepts any non-empty string'), but allows orphan items if a custom category is later deleted.",
+    "Outfit chat system prompt updated to the luxury-stylist persona as described. Endpoint contract unchanged; response_model OutfitChatResponse still enforces {reply, session_id, recommended_item_ids[]}. recommended_item_ids regex extraction unchanged."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iter3_auth_categories.py (created)",
+    "/app/test_reports/pytest/pytest_iter3.xml (generated)"
+  ],
+  "success_rate": {
+    "backend": "100% (16/16)",
+    "frontend": "not tested (backend-only request)"
+  },
+  "seed_data_creation": "One temporary test user created via signup with TEST_cat_other_<random>@closetai.com (used to verify cross-user 404 on category delete). Two temporary user_categories on the baseline test user (test@closetai.com) and one temporary wardrobe item — ALL cleaned up via DELETE within the same test (try/finally). The baseline user's password was rotated through 2 reset cycles and RESTORED to 'test1234' (verified by a final login -> 200).",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Run with: cd /app && EXPO_PUBLIC_BACKEND_URL=https://fit-finder-178.preview.emergentagent.com python -m pytest backend/tests/test_iter3_auth_categories.py -v . Runtime ~3 min 13s due to four 46-second sleeps to clear the 45s forgot-password cooldown between OTP-issuing tests. OTPs are scraped from /var/log/supervisor/backend.err.log matching 'OTP for <email> (dev fallback): <6-digit>' — Resend is in test-mode and only delivers to aadyap17@gmail.com, every other recipient triggers a logged ResendError followed by the dev fallback line. The reset_token is a single-use 10-min JWT bound to the password_resets row id; the row's status flips pending->verified->used. Baseline credentials test@closetai.com / test1234 are guaranteed restored at end. If you need to add tests, the conftest.py provides session-scoped 'api', 'base_url', 'real_image_b64' fixtures.",
+  "rca_of_issue": "No bugs found. Tests passed on first run; baseline credentials restored. Resend test-mode error in backend.err.log is expected per the request's agent_to_agent_context_note and is the trigger for the OTP dev-fallback log line that tests rely on."
+}

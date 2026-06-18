@@ -8,12 +8,17 @@ import logging
 import bcrypt
 import jwt
 import uuid
+import re as _re
+import hmac
+import hashlib
+import secrets
 import asyncio
 from pathlib import Path
 from pydantic import BaseModel, Field, EmailStr
 from typing import List, Optional, Literal
 from datetime import datetime, timezone, timedelta
 
+import resend
 from emergentintegrations.llm.chat import LlmChat, UserMessage, ImageContent
 
 # ---------------------------------------------------------------------------
@@ -28,6 +33,10 @@ EMERGENT_LLM_KEY = os.environ["EMERGENT_LLM_KEY"]
 JWT_SECRET = os.environ["JWT_SECRET"]
 JWT_ALGORITHM = os.environ.get("JWT_ALGORITHM", "HS256")
 JWT_EXPIRY_DAYS = int(os.environ.get("JWT_EXPIRY_DAYS", "30"))
+RESEND_API_KEY = os.environ.get("RESEND_API_KEY", "")
+RESEND_FROM = os.environ.get("RESEND_FROM", "ClosetAI <onboarding@resend.dev>")
+APP_NAME = os.environ.get("APP_NAME", "ClosetAI")
+resend.api_key = RESEND_API_KEY
 
 LLM_MODEL_PROVIDER = "anthropic"
 LLM_MODEL_NAME = "claude-sonnet-4-6"
@@ -63,6 +72,36 @@ DEFAULT_BRANDS = [
     {"id": "nordstrom", "name": "Nordstrom", "url": "https://www.nordstrom.com", "popular": True},
 ]
 
+# Built-in wardrobe categories. Users can add their own custom categories on top.
+BUILT_IN_CATEGORIES = [
+    {"id": "tops", "name": "Tops"},
+    {"id": "bottoms", "name": "Bottoms"},
+    {"id": "dresses", "name": "Dresses"},
+    {"id": "outerwear", "name": "Outerwear"},
+    {"id": "suits", "name": "Suits & Blazers"},
+    {"id": "shoes", "name": "Shoes"},
+    {"id": "bags", "name": "Bags"},
+    {"id": "accessories", "name": "Accessories"},
+    {"id": "hats", "name": "Hats"},
+    {"id": "jewelry", "name": "Jewelry"},
+    {"id": "watches", "name": "Watches"},
+    {"id": "belts", "name": "Belts"},
+    {"id": "scarves", "name": "Scarves"},
+    {"id": "sunglasses", "name": "Sunglasses"},
+    {"id": "activewear", "name": "Activewear"},
+    {"id": "swimwear", "name": "Swimwear"},
+    {"id": "sleepwear", "name": "Sleepwear"},
+    {"id": "loungewear", "name": "Loungewear"},
+    {"id": "underwear", "name": "Underwear"},
+]
+BUILT_IN_CATEGORY_IDS = {c["id"] for c in BUILT_IN_CATEGORIES}
+
+
+def slugify(s: str) -> str:
+    s = _re.sub(r"[^a-zA-Z0-9]+", "_", s.strip().lower())
+    s = _re.sub(r"_+", "_", s).strip("_")
+    return s[:40] or "category"
+
 
 # ---------------------------------------------------------------------------
 # Pydantic models
@@ -97,7 +136,7 @@ PRIVACY_VALUES = ["public", "friends", "private"]
 
 class WardrobeItemCreate(BaseModel):
     image_base64: str
-    category: Literal["tops", "bottoms", "outerwear", "shoes", "accessories", "dresses"]
+    category: str = Field(min_length=1, max_length=40)
     name: Optional[str] = None
     color: Optional[str] = None
     rating: int = Field(default=3, ge=1, le=5)
@@ -110,7 +149,7 @@ class WardrobeItemUpdate(BaseModel):
     color: Optional[str] = None
     rating: Optional[int] = Field(default=None, ge=1, le=5)
     privacy: Optional[Literal["public", "friends", "private"]] = None
-    category: Optional[Literal["tops", "bottoms", "outerwear", "shoes", "accessories", "dresses"]] = None
+    category: Optional[str] = Field(default=None, min_length=1, max_length=40)
     tags: Optional[List[str]] = None
 
 
@@ -413,14 +452,24 @@ async def delete_wardrobe_item(item_id: str, user: dict = Depends(get_current_us
 # Outfit AI chat
 # ---------------------------------------------------------------------------
 OUTFIT_SYSTEM_PROMPT = (
-    "You are ClosetAI, a personal fashion stylist. The user has a wardrobe of items with categories "
-    "(tops, bottoms, outerwear, shoes, accessories, dresses), each with a self-rating from 1-5 "
-    "(higher rating = the user likes it more). "
-    "Given the user's request (with weather and occasion if provided), recommend a complete outfit "
-    "by referencing items from their wardrobe by item id (format: ITEM:<id>). "
-    "Prefer items with higher ratings. Be warm, concise, and stylish in tone. "
-    "Always end with a short 'Why it works' sentence. "
-    "If the wardrobe is missing key pieces, suggest what they might buy."
+    "You are Closet AI, a premium personal styling assistant.\n\n"
+    "Communication Style:\n"
+    "- Be concise and elegant.\n"
+    "- Avoid emojis.\n"
+    "- Avoid excessive formatting.\n"
+    "- Do not use asterisks for emphasis.\n"
+    "- Keep responses under 100 words unless the user requests detail.\n"
+    "- Use short paragraphs instead of bullet points whenever possible.\n"
+    "- Sound like a luxury retail stylist, not a chatbot.\n"
+    "- Be confident and direct.\n"
+    "- Give recommendations first, explanations second.\n"
+    "- Never use phrases such as \"I'd be happy to help\", \"Great question\", or "
+    "\"Let me know if you'd like more help\".\n"
+    "- Avoid repeating the user's question.\n\n"
+    "You have access to the user's wardrobe with categories and a 1-5 self-rating "
+    "(higher rating means the user prefers it more). When recommending items, reference "
+    "each piece by ID using the exact format ITEM:<id>. Prefer higher-rated items. "
+    "If a key piece is missing, briefly suggest what they should buy next."
 )
 
 
@@ -1036,6 +1085,240 @@ async def delete_reminder(rid: str, user: dict = Depends(get_current_user)):
     res = await db.reminders.delete_one({"id": rid, "user_id": user["id"]})
     if res.deleted_count == 0:
         raise HTTPException(status_code=404, detail="Reminder not found")
+    return {"ok": True}
+
+
+# ---------------------------------------------------------------------------
+# Wardrobe categories (built-in + per-user custom)
+# ---------------------------------------------------------------------------
+class CategoryItem(BaseModel):
+    id: str
+    name: str
+    built_in: bool = False
+
+
+class CategoryCreate(BaseModel):
+    name: str = Field(min_length=1, max_length=40)
+
+
+@api_router.get("/categories", response_model=List[CategoryItem])
+async def list_categories(user: dict = Depends(get_current_user)):
+    out: List[CategoryItem] = [CategoryItem(id=c["id"], name=c["name"], built_in=True) for c in BUILT_IN_CATEGORIES]
+    user_docs = await db.user_categories.find({"user_id": user["id"]}, {"_id": 0}).sort("created_at", 1).to_list(200)
+    for d in user_docs:
+        out.append(CategoryItem(id=d["id"], name=d["name"], built_in=False))
+    return out
+
+
+@api_router.post("/categories", response_model=CategoryItem)
+async def add_category(body: CategoryCreate, user: dict = Depends(get_current_user)):
+    cid = slugify(body.name)
+    if cid in BUILT_IN_CATEGORY_IDS:
+        raise HTTPException(status_code=409, detail="Category already exists as built-in")
+    existing = await db.user_categories.find_one({"user_id": user["id"], "id": cid}, {"_id": 0})
+    if existing:
+        return CategoryItem(id=existing["id"], name=existing["name"], built_in=False)
+    doc = {
+        "id": cid,
+        "user_id": user["id"],
+        "name": body.name.strip(),
+        "created_at": utc_now(),
+    }
+    await db.user_categories.insert_one(doc)
+    return CategoryItem(id=cid, name=doc["name"], built_in=False)
+
+
+@api_router.delete("/categories/{cid}")
+async def delete_category(cid: str, user: dict = Depends(get_current_user)):
+    if cid in BUILT_IN_CATEGORY_IDS:
+        raise HTTPException(status_code=400, detail="Cannot remove a built-in category")
+    res = await db.user_categories.delete_one({"id": cid, "user_id": user["id"]})
+    if res.deleted_count == 0:
+        raise HTTPException(status_code=404, detail="Category not found")
+    return {"ok": True}
+
+
+# ---------------------------------------------------------------------------
+# Password reset (Resend OTP flow)
+# ---------------------------------------------------------------------------
+OTP_TTL_MINUTES = 15
+OTP_RESEND_COOLDOWN_SECONDS = 45
+
+
+class ForgotBody(BaseModel):
+    email: EmailStr
+
+
+class VerifyOtpBody(BaseModel):
+    email: EmailStr
+    otp: str = Field(min_length=6, max_length=6)
+
+
+class ResetPasswordBody(BaseModel):
+    reset_token: str
+    new_password: str = Field(min_length=6)
+
+
+def _hash_otp(otp: str) -> str:
+    return hashlib.sha256((JWT_SECRET + ":" + otp).encode("utf-8")).hexdigest()
+
+
+def _otp_email_html(name: str, otp: str) -> str:
+    return f"""<!doctype html>
+<html><body style="margin:0;padding:0;background:#FAF9F6;font-family:Georgia,serif;">
+  <div style="max-width:560px;margin:0 auto;padding:48px 32px;background:#FFFFFF;">
+    <div style="font-size:11px;letter-spacing:2px;color:#6A1E2F;font-weight:700;text-transform:uppercase;">{APP_NAME}</div>
+    <h1 style="font-family:Georgia,serif;font-size:34px;font-weight:700;color:#1A1A1A;margin:8px 0 6px;letter-spacing:-1px;">
+      Reset your password.
+    </h1>
+    <p style="font-family:Helvetica,Arial,sans-serif;color:#6B655E;font-size:15px;line-height:22px;">
+      Hi {name or 'there'}, use the code below to set a new password. The code expires in {OTP_TTL_MINUTES} minutes.
+    </p>
+    <div style="margin:32px 0;padding:24px;background:#F5F2EA;text-align:center;border-radius:12px;">
+      <div style="font-family:Georgia,serif;font-size:38px;font-weight:700;letter-spacing:12px;color:#6A1E2F;">
+        {otp}
+      </div>
+    </div>
+    <p style="font-family:Helvetica,Arial,sans-serif;color:#9C958C;font-size:12px;line-height:18px;">
+      If you didn't request this, you can safely ignore this email — your password will remain unchanged.
+    </p>
+    <p style="font-family:Helvetica,Arial,sans-serif;color:#9C958C;font-size:11px;letter-spacing:1px;text-transform:uppercase;margin-top:32px;">
+      {APP_NAME} · Your wardrobe, smarter.
+    </p>
+  </div>
+</body></html>"""
+
+
+async def _send_otp_email(email: str, name: str, otp: str) -> bool:
+    """Send OTP via Resend. Returns True on success, False on failure."""
+    if not RESEND_API_KEY:
+        logger.warning("RESEND_API_KEY not set — OTP for %s is %s", email, otp)
+        return False
+    try:
+        params = {
+            "from": RESEND_FROM,
+            "to": [email],
+            "subject": f"{APP_NAME}: Your password reset code",
+            "html": _otp_email_html(name, otp),
+        }
+        loop = asyncio.get_event_loop()
+        await loop.run_in_executor(None, lambda: resend.Emails.send(params))
+        return True
+    except Exception as e:
+        logger.exception("Resend send failed: %s", e)
+        return False
+
+
+@api_router.post("/auth/forgot")
+async def forgot_password(body: ForgotBody):
+    """Always returns 200 to avoid email enumeration. Sends OTP only if email is registered."""
+    email = body.email.lower()
+    user = await db.users.find_one({"email": email}, {"_id": 0})
+    if user:
+        # Throttle: don't allow more than one OTP per cooldown window per user.
+        recent = await db.password_resets.find_one(
+            {"user_id": user["id"], "status": "pending"},
+            sort=[("created_at", -1)],
+            projection={"_id": 0},
+        )
+        now = datetime.now(timezone.utc)
+        if recent:
+            try:
+                last = datetime.fromisoformat(recent["created_at"])
+                if (now - last).total_seconds() < OTP_RESEND_COOLDOWN_SECONDS:
+                    return {"ok": True, "cooldown_seconds": int(OTP_RESEND_COOLDOWN_SECONDS - (now - last).total_seconds())}
+            except Exception:
+                pass
+
+        # Invalidate previous pending OTPs for this user
+        await db.password_resets.update_many(
+            {"user_id": user["id"], "status": "pending"},
+            {"$set": {"status": "superseded"}},
+        )
+        otp = f"{secrets.randbelow(1_000_000):06d}"
+        expires = now + timedelta(minutes=OTP_TTL_MINUTES)
+        await db.password_resets.insert_one({
+            "id": str(uuid.uuid4()),
+            "user_id": user["id"],
+            "email": email,
+            "otp_hash": _hash_otp(otp),
+            "status": "pending",
+            "attempts": 0,
+            "expires_at": expires.isoformat(),
+            "created_at": now.isoformat(),
+        })
+        sent = await _send_otp_email(email, user.get("name") or "", otp)
+        if not sent:
+            logger.info("OTP for %s (dev fallback): %s", email, otp)
+    return {"ok": True}
+
+
+@api_router.post("/auth/verify-otp")
+async def verify_otp(body: VerifyOtpBody):
+    email = body.email.lower()
+    if not body.otp.isdigit():
+        raise HTTPException(status_code=400, detail="Invalid code")
+    user = await db.users.find_one({"email": email}, {"_id": 0})
+    if not user:
+        raise HTTPException(status_code=400, detail="Invalid code")
+    rec = await db.password_resets.find_one(
+        {"user_id": user["id"], "status": "pending"},
+        sort=[("created_at", -1)],
+        projection={"_id": 0},
+    )
+    if not rec:
+        raise HTTPException(status_code=400, detail="Invalid code")
+    try:
+        expires = datetime.fromisoformat(rec["expires_at"])
+    except Exception:
+        expires = datetime.now(timezone.utc) - timedelta(seconds=1)
+    if datetime.now(timezone.utc) > expires:
+        await db.password_resets.update_one({"id": rec["id"]}, {"$set": {"status": "expired"}})
+        raise HTTPException(status_code=400, detail="Code expired. Request a new one.")
+    if rec.get("attempts", 0) >= 5:
+        await db.password_resets.update_one({"id": rec["id"]}, {"$set": {"status": "locked"}})
+        raise HTTPException(status_code=429, detail="Too many attempts. Request a new code.")
+
+    if not hmac.compare_digest(rec["otp_hash"], _hash_otp(body.otp)):
+        await db.password_resets.update_one({"id": rec["id"]}, {"$inc": {"attempts": 1}})
+        raise HTTPException(status_code=400, detail="Invalid code")
+
+    # OTP valid → mark verified, issue short-lived reset token
+    await db.password_resets.update_one({"id": rec["id"]}, {"$set": {"status": "verified"}})
+    payload = {
+        "sub": user["id"],
+        "purpose": "password_reset",
+        "rid": rec["id"],
+        "exp": datetime.now(timezone.utc) + timedelta(minutes=10),
+        "iat": datetime.now(timezone.utc),
+    }
+    token = jwt.encode(payload, JWT_SECRET, algorithm=JWT_ALGORITHM)
+    return {"reset_token": token}
+
+
+@api_router.post("/auth/reset")
+async def reset_password(body: ResetPasswordBody):
+    try:
+        payload = jwt.decode(body.reset_token, JWT_SECRET, algorithms=[JWT_ALGORITHM])
+    except jwt.PyJWTError:
+        raise HTTPException(status_code=400, detail="Invalid or expired reset token")
+    if payload.get("purpose") != "password_reset":
+        raise HTTPException(status_code=400, detail="Invalid reset token")
+    user_id = payload.get("sub")
+    rid = payload.get("rid")
+    rec = await db.password_resets.find_one({"id": rid, "user_id": user_id}, {"_id": 0})
+    if not rec or rec.get("status") != "verified":
+        raise HTTPException(status_code=400, detail="Reset token already used or invalid")
+    user = await db.users.find_one({"id": user_id}, {"_id": 0})
+    if not user:
+        raise HTTPException(status_code=400, detail="Invalid reset token")
+    new_hash = hash_password(body.new_password)
+    await db.users.update_one({"id": user_id}, {"$set": {"password_hash": new_hash}})
+    await db.password_resets.update_one({"id": rid}, {"$set": {"status": "used"}})
+    # Invalidate any other pending resets
+    await db.password_resets.update_many(
+        {"user_id": user_id, "status": "pending"}, {"$set": {"status": "superseded"}}
+    )
     return {"ok": True}
 
 

@@ -14,19 +14,11 @@ import {
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useFocusEffect, useRouter } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
-import { api, WardrobeItem } from "@/src/api";
+import { api, Category, WardrobeItem } from "@/src/api";
 import { useAuth } from "@/src/useAuth";
 import { colors, radii, shadows, spacing, typography } from "@/src/theme";
 
-const CATEGORIES = [
-  { id: "all", label: "All" },
-  { id: "tops", label: "Tops" },
-  { id: "bottoms", label: "Bottoms" },
-  { id: "outerwear", label: "Outerwear" },
-  { id: "dresses", label: "Dresses" },
-  { id: "shoes", label: "Shoes" },
-  { id: "accessories", label: "Accessories" },
-];
+const CATEGORIES_ALL = { id: "all", label: "All" } as const;
 
 const EMPTY_IMG =
   "https://images.unsplash.com/photo-1509319117193-57bab727e09d?crop=entropy&cs=srgb&fm=jpg&w=800&q=80";
@@ -60,14 +52,19 @@ export default function Wardrobe() {
   const router = useRouter();
   const { user } = useAuth();
   const [items, setItems] = useState<WardrobeItem[]>([]);
+  const [categories, setCategories] = useState<Category[]>([]);
   const [cat, setCat] = useState("all");
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
 
   const load = useCallback(async () => {
     try {
-      const data = await api.listWardrobe(cat === "all" ? undefined : cat);
+      const [data, cats] = await Promise.all([
+        api.listWardrobe(cat === "all" ? undefined : cat),
+        api.listCategories(),
+      ]);
       setItems(data);
+      setCategories(cats);
     } catch (e: any) {
       console.warn(e.message);
     } finally {
@@ -140,7 +137,10 @@ export default function Wardrobe() {
               style={styles.chipsRowWrap}
               contentContainerStyle={styles.chipsRow}
             >
-              {CATEGORIES.map((c) => {
+              {[
+                { id: "all", name: "All", built_in: true } as Category,
+                ...categories,
+              ].map((c) => {
                 const active = cat === c.id;
                 return (
                   <TouchableOpacity
@@ -149,10 +149,18 @@ export default function Wardrobe() {
                     style={[styles.chip, active && styles.chipActive]}
                     onPress={() => setCat(c.id)}
                   >
-                    <Text style={[styles.chipText, active && styles.chipTextActive]}>{c.label}</Text>
+                    <Text style={[styles.chipText, active && styles.chipTextActive]}>{c.name}</Text>
                   </TouchableOpacity>
                 );
               })}
+              <TouchableOpacity
+                testID="filter-manage-categories"
+                style={[styles.chip, { borderStyle: "dashed" }]}
+                onPress={() => router.push("/wardrobe/add")}
+              >
+                <Ionicons name="add" size={14} color={colors.primary} />
+                <Text style={[styles.chipText, { marginLeft: 4 }]}>Add</Text>
+              </TouchableOpacity>
             </ScrollView>
 
             {/* Grid */}
@@ -238,6 +246,8 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: colors.border,
     justifyContent: "center",
+    flexDirection: "row",
+    alignItems: "center",
     flexShrink: 0,
   },
   chipActive: { backgroundColor: colors.primary, borderColor: colors.primary },

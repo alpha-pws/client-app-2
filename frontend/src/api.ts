@@ -113,6 +113,12 @@ export type Reminder = {
   created_at: string;
 };
 
+export type Category = {
+  id: string;
+  name: string;
+  built_in: boolean;
+};
+
 export async function setSession(token: string, user: User) {
   await storage.secureSet(TOKEN_KEY, token);
   await storage.setItem(USER_KEY, JSON.stringify(user));
@@ -181,6 +187,33 @@ export const api = {
       auth: false,
     }),
   me: () => request<User>("/auth/me"),
+
+  // password reset
+  forgotPassword: (email: string) =>
+    request<{ ok: true; cooldown_seconds?: number }>("/auth/forgot", {
+      method: "POST",
+      body: { email },
+      auth: false,
+    }),
+  verifyOtp: (email: string, otp: string) =>
+    request<{ reset_token: string }>("/auth/verify-otp", {
+      method: "POST",
+      body: { email, otp },
+      auth: false,
+    }),
+  resetPassword: (reset_token: string, new_password: string) =>
+    request<{ ok: true }>("/auth/reset", {
+      method: "POST",
+      body: { reset_token, new_password },
+      auth: false,
+    }),
+
+  // categories
+  listCategories: () => request<Category[]>("/categories"),
+  addCategory: (name: string) =>
+    request<Category>("/categories", { method: "POST", body: { name } }),
+  deleteCategory: (id: string) =>
+    request<{ ok: true }>(`/categories/${id}`, { method: "DELETE" }),
 
   // wardrobe
   listWardrobe: (category?: string) =>

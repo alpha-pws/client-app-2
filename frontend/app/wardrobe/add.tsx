@@ -1,9 +1,10 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
   Image,
   KeyboardAvoidingView,
+  Modal,
   Platform,
   ScrollView,
   StyleSheet,
@@ -17,17 +18,8 @@ import { SafeAreaView } from "react-native-safe-area-context";
 import { useRouter } from "expo-router";
 import * as ImagePicker from "expo-image-picker";
 import { Ionicons } from "@expo/vector-icons";
-import { api } from "@/src/api";
+import { api, Category } from "@/src/api";
 import { colors, spacing, typography } from "@/src/theme";
-
-const CATS = [
-  { id: "tops", label: "Tops" },
-  { id: "bottoms", label: "Bottoms" },
-  { id: "outerwear", label: "Outerwear" },
-  { id: "dresses", label: "Dresses" },
-  { id: "shoes", label: "Shoes" },
-  { id: "accessories", label: "Accessories" },
-];
 
 const PRIVACY = [
   { id: "public", label: "Public" },
@@ -39,12 +31,48 @@ export default function AddWardrobe() {
   const router = useRouter();
   const [imageB64, setImageB64] = useState<string | null>(null);
   const [category, setCategory] = useState<string>("tops");
+  const [categories, setCategories] = useState<Category[]>([]);
   const [name, setName] = useState("");
   const [color, setColor] = useState("");
   const [rating, setRating] = useState(4);
   const [privacy, setPrivacy] = useState("friends");
   const [saving, setSaving] = useState(false);
   const [requesting, setRequesting] = useState(false);
+  const [showCatModal, setShowCatModal] = useState(false);
+  const [newCatName, setNewCatName] = useState("");
+  const [addingCat, setAddingCat] = useState(false);
+
+  useEffect(() => {
+    api.listCategories().then(setCategories).catch(() => {});
+  }, []);
+
+  const addCustomCategory = async () => {
+    if (!newCatName.trim()) return;
+    setAddingCat(true);
+    try {
+      const c = await api.addCategory(newCatName.trim());
+      const fresh = await api.listCategories();
+      setCategories(fresh);
+      setCategory(c.id);
+      setNewCatName("");
+      setShowCatModal(false);
+    } catch (e: any) {
+      Alert.alert("Failed", e.message);
+    } finally {
+      setAddingCat(false);
+    }
+  };
+
+  const removeCustomCategory = async (cid: string) => {
+    try {
+      await api.deleteCategory(cid);
+      const fresh = await api.listCategories();
+      setCategories(fresh);
+      if (category === cid) setCategory("tops");
+    } catch (e: any) {
+      Alert.alert("Failed", e.message);
+    }
+  };
 
   const ensureCameraPermission = async () => {
     const { status, canAskAgain } = await ImagePicker.getCameraPermissionsAsync();
@@ -182,7 +210,7 @@ export default function AddWardrobe() {
 
           <Text style={styles.sectionLabel}>CATEGORY</Text>
           <View style={styles.chipsWrap}>
-            {CATS.map((c) => {
+            {categories.map((c) => {
               const active = category === c.id;
               return (
                 <TouchableOpacity
@@ -190,11 +218,34 @@ export default function AddWardrobe() {
                   testID={`category-chip-${c.id}`}
                   style={[styles.chip, active && styles.chipActive]}
                   onPress={() => setCategory(c.id)}
+                  onLongPress={() => {
+                    if (!c.built_in) {
+                      Alert.alert(
+                        "Remove category?",
+                        `Delete "${c.name}"? Existing items keep their category.`,
+                        [
+                          { text: "Cancel", style: "cancel" },
+                          { text: "Delete", style: "destructive", onPress: () => removeCustomCategory(c.id) },
+                        ],
+                      );
+                    }
+                  }}
                 >
-                  <Text style={[styles.chipText, active && styles.chipTextActive]}>{c.label}</Text>
+                  <Text style={[styles.chipText, active && styles.chipTextActive]}>{c.name}</Text>
+                  {!c.built_in && (
+                    <Text style={[styles.chipBadge, active && { color: colors.primaryFg }]}>·</Text>
+                  )}
                 </TouchableOpacity>
               );
             })}
+            <TouchableOpacity
+              testID="add-category-chip"
+              style={[styles.chip, { borderStyle: "dashed" }]}
+              onPress={() => setShowCatModal(true)}
+            >
+              <Ionicons name="add" size={14} color={colors.primary} />
+              <Text style={[styles.chipText, { marginLeft: 4 }]}>New</Text>
+            </TouchableOpacity>
           </View>
 
           <Text style={styles.sectionLabel}>NAME</Text>
@@ -266,6 +317,51 @@ export default function AddWardrobe() {
           </TouchableOpacity>
         </ScrollView>
       </KeyboardAvoidingView>
+
+      {/* Add Category modal */}
+      <Modal visible={showCatModal} transparent animationType="slide" onRequestClose={() => setShowCatModal(false)}>
+        <KeyboardAvoidingView
+          style={styles.modalBackdrop}
+          behavior={Platform.OS === "ios" ? "padding" : undefined}
+        >
+          <View style={styles.modalCard}>
+            <Text style={styles.modalTitle}>New category</Text>
+            <Text style={styles.modalHelper}>e.g. Vintage Tees, Hiking, Formal Wear.</Text>
+            <TextInput
+              testID="new-category-input"
+              value={newCatName}
+              onChangeText={setNewCatName}
+              autoFocus
+              placeholder="Category name"
+              placeholderTextColor={colors.subtle}
+              style={styles.modalInput}
+            />
+            <View style={{ flexDirection: "row", gap: spacing.sm, marginTop: spacing.md }}>
+              <TouchableOpacity
+                style={[styles.modalBtnGhost, { flex: 1 }]}
+                onPress={() => {
+                  setShowCatModal(false);
+                  setNewCatName("");
+                }}
+              >
+                <Text style={styles.modalBtnGhostText}>Cancel</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                testID="save-new-category-button"
+                style={[styles.modalBtn, { flex: 1, opacity: addingCat || !newCatName.trim() ? 0.5 : 1 }]}
+                onPress={addCustomCategory}
+                disabled={addingCat || !newCatName.trim()}
+              >
+                {addingCat ? (
+                  <ActivityIndicator color={colors.primaryFg} />
+                ) : (
+                  <Text style={styles.modalBtnText}>Add</Text>
+                )}
+              </TouchableOpacity>
+            </View>
+          </View>
+        </KeyboardAvoidingView>
+      </Modal>
     </SafeAreaView>
   );
 }
@@ -313,10 +409,34 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: colors.border,
     backgroundColor: colors.surface,
+    flexDirection: "row",
+    alignItems: "center",
   },
   chipActive: { backgroundColor: colors.primary, borderColor: colors.primary },
   chipText: { fontSize: 12, fontWeight: "700", color: colors.primary },
   chipTextActive: { color: colors.primaryFg },
+  chipBadge: { marginLeft: 4, fontSize: 14, color: colors.primary, fontWeight: "900" },
+  modalBackdrop: { flex: 1, backgroundColor: "rgba(0,0,0,0.5)", justifyContent: "flex-end" },
+  modalCard: {
+    backgroundColor: colors.surface,
+    padding: spacing.xl,
+    borderTopLeftRadius: 20,
+    borderTopRightRadius: 20,
+  },
+  modalTitle: { ...typography.h1, fontSize: 24 },
+  modalHelper: { ...typography.body, color: colors.mutedFg, marginTop: 4 },
+  modalInput: {
+    marginTop: spacing.md,
+    borderBottomWidth: 1,
+    borderBottomColor: colors.primary,
+    paddingVertical: 12,
+    fontSize: 17,
+    color: colors.primary,
+  },
+  modalBtn: { backgroundColor: colors.primary, paddingVertical: 14, alignItems: "center" },
+  modalBtnText: { color: colors.primaryFg, fontWeight: "800", letterSpacing: 1, fontSize: 12 },
+  modalBtnGhost: { borderWidth: 1, borderColor: colors.border, paddingVertical: 14, alignItems: "center" },
+  modalBtnGhostText: { color: colors.primary, fontWeight: "700", letterSpacing: 1, fontSize: 12 },
   input: {
     borderBottomWidth: 1,
     borderBottomColor: colors.primary,

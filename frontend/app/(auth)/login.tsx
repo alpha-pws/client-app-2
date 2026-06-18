@@ -89,6 +89,12 @@ export default function Login() {
               <Text style={styles.buttonText}>{loading ? "Signing in…" : "Sign In"}</Text>
             </TouchableOpacity>
 
+            <Link href={"/(auth)/forgot" as any} asChild>
+              <TouchableOpacity testID="forgot-password-link" style={styles.forgotLink}>
+                <Text style={styles.forgotLinkText}>Forgot password?</Text>
+              </TouchableOpacity>
+            </Link>
+
             <Link href="/(auth)/signup" asChild>
               <TouchableOpacity testID="go-to-signup-link" style={styles.linkBtn}>
                 <Text style={styles.linkText}>
@@ -130,4 +136,6 @@ const styles = StyleSheet.create({
   linkBtn: { marginTop: spacing.xl, alignItems: "center" },
   linkText: { color: colors.mutedFg, fontSize: 14 },
   linkAccent: { color: colors.primary, fontWeight: "700" },
+  forgotLink: { marginTop: spacing.md, alignItems: "center", paddingVertical: 8 },
+  forgotLinkText: { color: colors.primary, fontSize: 13, fontWeight: "600" },
 });
