@@ -317,6 +317,8 @@ export const api = {
     session_id?: string;
     weather?: string;
     occasion?: string;
+    lat?: number;
+    lon?: number;
   }) =>
     request<{ reply: string; session_id: string; recommended_item_ids: string[] }>(
       "/outfit/chat",

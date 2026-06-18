@@ -49,7 +49,7 @@ export default function Onboarding() {
   const [chest, setChest] = useState("");
   const [waist, setWaist] = useState("");
   const [hips, setHips] = useState("");
-  const [styles, setStyles] = useState<string[]>([]);
+  const [selectedStyles, setSelectedStyles] = useState<string[]>([]);
   const [skinTone, setSkinTone] = useState("");
   const [hairColor, setHairColor] = useState("");
   const [eyeColor, setEyeColor] = useState("");
@@ -59,7 +59,7 @@ export default function Onboarding() {
   const [locLabel, setLocLabel] = useState<string | null>(null);
 
   const toggleStyle = (id: string) => {
-    setStyles((prev) => (prev.includes(id) ? prev.filter((s) => s !== id) : [...prev, id]));
+    setSelectedStyles((prev) => (prev.includes(id) ? prev.filter((s) => s !== id) : [...prev, id]));
   };
 
   const grabLocation = async () => {
@@ -98,7 +98,7 @@ export default function Onboarding() {
       if (chest) patch.chest_cm = parseFloat(chest);
       if (waist) patch.waist_cm = parseFloat(waist);
       if (hips) patch.hips_cm = parseFloat(hips);
-      if (styles.length) patch.styles = styles;
+      if (selectedStyles.length) patch.styles = selectedStyles;
       if (skinTone) patch.skin_tone = skinTone;
       if (hairColor) patch.hair_color = hairColor;
       if (eyeColor) patch.eye_color = eyeColor;
@@ -274,7 +274,7 @@ export default function Onboarding() {
               <Section title="Style Profile" hint="Select all that apply." />
               <View style={styles.chipsRow}>
                 {STYLES_LIST.map((s) => {
-                  const active = styles.includes(s.id);
+                  const active = selectedStyles.includes(s.id);
                   return (
                     <TouchableOpacity
                       key={s.id}
