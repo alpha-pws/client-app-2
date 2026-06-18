@@ -19,6 +19,7 @@ from typing import List, Optional, Literal
 from datetime import datetime, timezone, timedelta
 
 import resend
+import httpx
 from emergentintegrations.llm.chat import LlmChat, UserMessage, ImageContent
 
 # ---------------------------------------------------------------------------
@@ -171,6 +172,8 @@ class OutfitChatBody(BaseModel):
     session_id: Optional[str] = None
     weather: Optional[str] = None
     occasion: Optional[str] = None
+    lat: Optional[float] = None
+    lon: Optional[float] = None
 
 
 class OutfitChatResponse(BaseModel):
@@ -466,10 +469,16 @@ OUTFIT_SYSTEM_PROMPT = (
     "- Never use phrases such as \"I'd be happy to help\", \"Great question\", or "
     "\"Let me know if you'd like more help\".\n"
     "- Avoid repeating the user's question.\n\n"
-    "You have access to the user's wardrobe with categories and a 1-5 self-rating "
-    "(higher rating means the user prefers it more). When recommending items, reference "
-    "each piece by ID using the exact format ITEM:<id>. Prefer higher-rated items. "
-    "If a key piece is missing, briefly suggest what they should buy next."
+    "Decision engine — every recommendation must factor in (when available): "
+    "the user's Style Avatar (height, weight, measurements, body shape, preferred fits, "
+    "preferred brands, shoe size), Style Profile (which aesthetics they like), Color "
+    "Profile (best colors, colors to avoid), current weather and location, season, "
+    "upcoming travel and calendar events, occasion, and their wardrobe inventory with "
+    "category and 1-5 self-rating. Prefer existing wardrobe items before suggesting "
+    "purchases. When recommending wardrobe items, reference each piece by ID using "
+    "the exact format ITEM:<id>. Prefer higher-rated items. If a key piece is missing, "
+    "briefly suggest what they should buy and the recommended size based on their "
+    "measurements."
 )
 
 
@@ -488,28 +497,19 @@ def _format_wardrobe_for_prompt(items: List[dict]) -> str:
 @api_router.post("/outfit/chat", response_model=OutfitChatResponse)
 async def outfit_chat(body: OutfitChatBody, user: dict = Depends(get_current_user)):
     session_id = body.session_id or f"outfit-{user['id']}-{uuid.uuid4()}"
-    wardrobe = await db.wardrobe.find({"user_id": user["id"]}, {"_id": 0}).to_list(500)
-    wardrobe_text = _format_wardrobe_for_prompt(wardrobe)
-    system_msg = (
-        f"{OUTFIT_SYSTEM_PROMPT}\n\nUSER'S WARDROBE:\n{wardrobe_text}\n\n"
-        f"The user's name is {user['name']}."
-    )
+    ctx = await _build_context_for_user(user, body.lat, body.lon)
+    system_msg = _build_system_message(user, ctx)
     chat = _make_chat(session_id, system_msg)
     context_parts = []
     if body.weather:
-        context_parts.append(f"Weather: {body.weather}")
+        context_parts.append(f"User-stated weather override: {body.weather}")
     if body.occasion:
         context_parts.append(f"Occasion: {body.occasion}")
     context = "\n".join(context_parts)
     full_msg = f"{context}\n\nUser: {body.message}" if context else body.message
     reply_text = await _llm_send(chat, UserMessage(text=full_msg))
-    # Extract recommended item ids from reply: "ITEM:<uuid>"
-    import re
-    rec_ids = list({m for m in re.findall(r"ITEM:([0-9a-fA-F-]{36})", reply_text)})
-    # filter to actual ids in user's wardrobe
-    valid_ids = {it["id"] for it in wardrobe}
-    rec_ids = [r for r in rec_ids if r in valid_ids]
-    # persist chat history
+    valid_ids = {it["id"] for it in (ctx["wardrobe"] or [])}
+    rec_ids = _extract_item_ids(reply_text, valid_ids)
     await db.outfit_chats.insert_one({
         "id": str(uuid.uuid4()),
         "user_id": user["id"],
@@ -1086,6 +1086,385 @@ async def delete_reminder(rid: str, user: dict = Depends(get_current_user)):
     if res.deleted_count == 0:
         raise HTTPException(status_code=404, detail="Reminder not found")
     return {"ok": True}
+
+
+# ---------------------------------------------------------------------------
+# Style Avatar / Fit Profile
+# ---------------------------------------------------------------------------
+STYLE_OPTIONS = [
+    "classic", "luxury", "smart_casual", "business", "minimalist",
+    "streetwear", "athleisure", "contemporary", "trend_driven",
+]
+
+
+class StyleProfileUpdate(BaseModel):
+    height_cm: Optional[float] = Field(default=None, ge=80, le=260)
+    weight_kg: Optional[float] = Field(default=None, ge=25, le=300)
+    age_range: Optional[str] = None
+    gender: Optional[str] = None
+    chest_cm: Optional[float] = None
+    waist_cm: Optional[float] = None
+    hips_cm: Optional[float] = None
+    neck_cm: Optional[float] = None
+    shoulder_cm: Optional[float] = None
+    sleeve_cm: Optional[float] = None
+    inseam_cm: Optional[float] = None
+    shoe_size: Optional[str] = None
+    body_shape: Optional[str] = None
+    styles: Optional[List[str]] = None
+    skin_tone: Optional[str] = None
+    hair_color: Optional[str] = None
+    eye_color: Optional[str] = None
+    best_colors: Optional[List[str]] = None
+    avoid_colors: Optional[List[str]] = None
+    preferred_brands: Optional[List[str]] = None
+    preferred_fits: Optional[List[str]] = None
+    avatar_b64: Optional[str] = None
+    home_lat: Optional[float] = None
+    home_lon: Optional[float] = None
+    home_label: Optional[str] = None
+    onboarded: Optional[bool] = None
+
+
+class StyleProfile(BaseModel):
+    user_id: str
+    height_cm: Optional[float] = None
+    weight_kg: Optional[float] = None
+    age_range: Optional[str] = None
+    gender: Optional[str] = None
+    chest_cm: Optional[float] = None
+    waist_cm: Optional[float] = None
+    hips_cm: Optional[float] = None
+    neck_cm: Optional[float] = None
+    shoulder_cm: Optional[float] = None
+    sleeve_cm: Optional[float] = None
+    inseam_cm: Optional[float] = None
+    shoe_size: Optional[str] = None
+    body_shape: Optional[str] = None
+    styles: List[str] = []
+    skin_tone: Optional[str] = None
+    hair_color: Optional[str] = None
+    eye_color: Optional[str] = None
+    best_colors: List[str] = []
+    avoid_colors: List[str] = []
+    preferred_brands: List[str] = []
+    preferred_fits: List[str] = []
+    avatar_b64: Optional[str] = None
+    home_lat: Optional[float] = None
+    home_lon: Optional[float] = None
+    home_label: Optional[str] = None
+    onboarded: bool = False
+    created_at: str
+    updated_at: str
+
+
+async def _get_or_create_profile(user_id: str) -> dict:
+    doc = await db.profiles.find_one({"user_id": user_id}, {"_id": 0})
+    if doc:
+        return doc
+    doc = {
+        "user_id": user_id,
+        "styles": [],
+        "best_colors": [],
+        "avoid_colors": [],
+        "preferred_brands": [],
+        "preferred_fits": [],
+        "onboarded": False,
+        "created_at": utc_now(),
+        "updated_at": utc_now(),
+    }
+    await db.profiles.insert_one(doc)
+    return {k: v for k, v in doc.items() if k != "_id"}
+
+
+@api_router.get("/profile", response_model=StyleProfile)
+async def get_profile(user: dict = Depends(get_current_user)):
+    doc = await _get_or_create_profile(user["id"])
+    return StyleProfile(**{k: doc.get(k) for k in StyleProfile.model_fields.keys()})
+
+
+@api_router.patch("/profile", response_model=StyleProfile)
+async def update_profile(body: StyleProfileUpdate, user: dict = Depends(get_current_user)):
+    update = {k: v for k, v in body.model_dump().items() if v is not None}
+    update["updated_at"] = utc_now()
+    if "styles" in update:
+        update["styles"] = [s for s in update["styles"] if isinstance(s, str)]
+    await _get_or_create_profile(user["id"])
+    await db.profiles.update_one({"user_id": user["id"]}, {"$set": update})
+    doc = await db.profiles.find_one({"user_id": user["id"]}, {"_id": 0})
+    return StyleProfile(**{k: doc.get(k) for k in StyleProfile.model_fields.keys()})
+
+
+# ---------------------------------------------------------------------------
+# Weather (Open-Meteo, free, no key)
+# ---------------------------------------------------------------------------
+def _wmo_to_condition(code: int) -> str:
+    if code == 0:
+        return "clear"
+    if code in (1, 2):
+        return "mostly clear"
+    if code == 3:
+        return "overcast"
+    if code in (45, 48):
+        return "fog"
+    if code in (51, 53, 55, 56, 57):
+        return "drizzle"
+    if code in (61, 63, 65, 66, 67):
+        return "rain"
+    if code in (71, 73, 75, 77, 85, 86):
+        return "snow"
+    if code in (80, 81, 82):
+        return "showers"
+    if code in (95, 96, 99):
+        return "thunderstorm"
+    return "unknown"
+
+
+@api_router.get("/weather")
+async def weather(lat: float, lon: float, user: dict = Depends(get_current_user)):
+    url = (
+        f"https://api.open-meteo.com/v1/forecast?latitude={lat}&longitude={lon}"
+        "&current=temperature_2m,relative_humidity_2m,apparent_temperature,"
+        "weather_code,wind_speed_10m,precipitation,uv_index"
+        "&daily=temperature_2m_max,temperature_2m_min,precipitation_probability_max,weather_code"
+        "&forecast_days=3&timezone=auto"
+    )
+    geocode_url = (
+        f"https://geocoding-api.open-meteo.com/v1/reverse?latitude={lat}&longitude={lon}&language=en&count=1"
+    )
+    async with httpx.AsyncClient(timeout=10) as client_h:
+        try:
+            r = await client_h.get(url)
+            r.raise_for_status()
+            data = r.json()
+        except Exception as e:
+            raise HTTPException(status_code=502, detail=f"Weather lookup failed: {e}")
+        place = None
+        try:
+            gr = await client_h.get(geocode_url)
+            if gr.status_code == 200:
+                results = gr.json().get("results") or []
+                if results:
+                    p = results[0]
+                    place = ", ".join([x for x in [p.get("name"), p.get("admin1"), p.get("country")] if x])
+        except Exception:
+            pass
+
+    cur = data.get("current", {})
+    daily = data.get("daily", {})
+    code = int(cur.get("weather_code") or 0)
+    out = {
+        "place": place,
+        "lat": lat,
+        "lon": lon,
+        "temp_c": cur.get("temperature_2m"),
+        "feels_like_c": cur.get("apparent_temperature"),
+        "humidity": cur.get("relative_humidity_2m"),
+        "wind_kph": cur.get("wind_speed_10m"),
+        "precip_mm": cur.get("precipitation"),
+        "uv_index": cur.get("uv_index"),
+        "condition": _wmo_to_condition(code),
+        "weather_code": code,
+        "summary": f"{round(cur.get('temperature_2m', 0))}°C, {_wmo_to_condition(code)}",
+        "forecast": [
+            {
+                "date": d,
+                "temp_min_c": tn,
+                "temp_max_c": tx,
+                "precip_chance": pc,
+                "condition": _wmo_to_condition(int(wc or 0)),
+            }
+            for d, tn, tx, pc, wc in zip(
+                daily.get("time", []),
+                daily.get("temperature_2m_min", []),
+                daily.get("temperature_2m_max", []),
+                daily.get("precipitation_probability_max", []),
+                daily.get("weather_code", []),
+            )
+        ],
+    }
+    return out
+
+
+# ---------------------------------------------------------------------------
+# Outfit generator + Build around this item
+# ---------------------------------------------------------------------------
+OCCASION_OPTIONS = [
+    "work", "weekend", "date_night", "travel", "wedding",
+    "casual", "formal", "hot_weather", "cold_weather",
+]
+
+
+class OutfitGenBody(BaseModel):
+    occasion: str
+    notes: Optional[str] = None
+    lat: Optional[float] = None
+    lon: Optional[float] = None
+
+
+class BuildAroundBody(BaseModel):
+    notes: Optional[str] = None
+    lat: Optional[float] = None
+    lon: Optional[float] = None
+
+
+def _season_now() -> str:
+    m = datetime.now(timezone.utc).month
+    if m in (12, 1, 2):
+        return "winter"
+    if m in (3, 4, 5):
+        return "spring"
+    if m in (6, 7, 8):
+        return "summer"
+    return "autumn"
+
+
+def _format_profile_for_prompt(p: dict) -> str:
+    if not p:
+        return "(no Style Avatar set)"
+    parts = []
+    body = []
+    for k, label in [
+        ("height_cm", "height cm"),
+        ("weight_kg", "weight kg"),
+        ("chest_cm", "chest cm"),
+        ("waist_cm", "waist cm"),
+        ("hips_cm", "hips cm"),
+        ("shoulder_cm", "shoulder cm"),
+        ("inseam_cm", "inseam cm"),
+        ("shoe_size", "shoe size"),
+        ("body_shape", "body shape"),
+    ]:
+        if p.get(k):
+            body.append(f"{label}={p[k]}")
+    if body:
+        parts.append("Body: " + ", ".join(body))
+    if p.get("styles"):
+        parts.append("Style: " + ", ".join(p["styles"]))
+    if p.get("best_colors"):
+        parts.append("Best colors: " + ", ".join(p["best_colors"]))
+    if p.get("avoid_colors"):
+        parts.append("Avoid colors: " + ", ".join(p["avoid_colors"]))
+    if p.get("preferred_brands"):
+        parts.append("Preferred brands: " + ", ".join(p["preferred_brands"]))
+    if p.get("preferred_fits"):
+        parts.append("Preferred fits: " + ", ".join(p["preferred_fits"]))
+    return "\n".join(parts) if parts else "(no Style Avatar set)"
+
+
+async def _build_context_for_user(user: dict, lat: Optional[float] = None, lon: Optional[float] = None) -> dict:
+    profile = await db.profiles.find_one({"user_id": user["id"]}, {"_id": 0}) or {}
+    wardrobe = await db.wardrobe.find({"user_id": user["id"]}, {"_id": 0}).to_list(500)
+    now = datetime.now(timezone.utc)
+    upcoming = await db.events.find(
+        {"user_id": user["id"], "date": {"$gte": now.isoformat()}},
+        {"_id": 0},
+    ).sort("date", 1).to_list(5)
+    weather_data = None
+    use_lat = lat if lat is not None else profile.get("home_lat")
+    use_lon = lon if lon is not None else profile.get("home_lon")
+    if use_lat is not None and use_lon is not None:
+        try:
+            async with httpx.AsyncClient(timeout=8) as client_h:
+                wurl = (
+                    f"https://api.open-meteo.com/v1/forecast?latitude={use_lat}&longitude={use_lon}"
+                    "&current=temperature_2m,apparent_temperature,weather_code,precipitation,wind_speed_10m"
+                    "&timezone=auto"
+                )
+                wr = await client_h.get(wurl)
+                if wr.status_code == 200:
+                    d = wr.json().get("current", {})
+                    weather_data = {
+                        "temp_c": d.get("temperature_2m"),
+                        "feels_like_c": d.get("apparent_temperature"),
+                        "wind_kph": d.get("wind_speed_10m"),
+                        "precip_mm": d.get("precipitation"),
+                        "condition": _wmo_to_condition(int(d.get("weather_code") or 0)),
+                    }
+        except Exception:
+            pass
+    return {"profile": profile, "wardrobe": wardrobe, "upcoming": upcoming, "weather": weather_data}
+
+
+def _build_system_message(user: dict, ctx: dict, extra: str = "") -> str:
+    profile_text = _format_profile_for_prompt(ctx.get("profile") or {})
+    wardrobe_text = _format_wardrobe_for_prompt(ctx.get("wardrobe") or [])
+    season = _season_now()
+    weather = ctx.get("weather")
+    upcoming = ctx.get("upcoming") or []
+    weather_str = "(unknown)"
+    if weather:
+        weather_str = (
+            f"{weather.get('temp_c')}°C feels like {weather.get('feels_like_c')}°C, "
+            f"{weather.get('condition')}, wind {weather.get('wind_kph')} km/h, "
+            f"precip {weather.get('precip_mm')} mm"
+        )
+    events_str = "\n".join(
+        f"- {e['title']} on {e['date'][:10]} ({e.get('location') or 'no location'})" for e in upcoming
+    ) or "(none scheduled)"
+    sys = (
+        f"{OUTFIT_SYSTEM_PROMPT}\n\n"
+        f"USER: {user.get('name', '')}\n"
+        f"SEASON: {season}\n"
+        f"WEATHER: {weather_str}\n"
+        f"STYLE AVATAR:\n{profile_text}\n\n"
+        f"UPCOMING EVENTS:\n{events_str}\n\n"
+        f"WARDROBE:\n{wardrobe_text}\n"
+    )
+    if extra:
+        sys += f"\n{extra}"
+    return sys
+
+
+def _extract_item_ids(reply: str, valid: set[str]) -> List[str]:
+    ids = list({m for m in _re.findall(r"ITEM:([0-9a-fA-F-]{36})", reply)})
+    return [i for i in ids if i in valid]
+
+
+@api_router.post("/outfit/generator", response_model=OutfitChatResponse)
+async def outfit_generator(body: OutfitGenBody, user: dict = Depends(get_current_user)):
+    ctx = await _build_context_for_user(user, body.lat, body.lon)
+    session_id = f"gen-{user['id']}-{body.occasion}-{uuid.uuid4()}"
+    pretty_occasion = body.occasion.replace("_", " ")
+    sys = _build_system_message(user, ctx)
+    chat = _make_chat(session_id, sys)
+    msg = (
+        f"Compose one complete outfit for: {pretty_occasion}.\n"
+        f"Use 3-5 pieces from the wardrobe. Reference each by ITEM:<id>. "
+        f"Add a single elegant sentence on why it works."
+    )
+    if body.notes:
+        msg += f"\nNotes: {body.notes}"
+    reply = await _llm_send(chat, UserMessage(text=msg))
+    valid = {it["id"] for it in (ctx["wardrobe"] or [])}
+    rec_ids = _extract_item_ids(reply, valid)
+    return OutfitChatResponse(reply=reply, session_id=session_id, recommended_item_ids=rec_ids)
+
+
+@api_router.post("/outfit/build-around/{item_id}")
+async def build_around_item(item_id: str, body: BuildAroundBody, user: dict = Depends(get_current_user)):
+    item = await db.wardrobe.find_one({"id": item_id, "user_id": user["id"]}, {"_id": 0})
+    if not item:
+        raise HTTPException(status_code=404, detail="Item not found")
+    ctx = await _build_context_for_user(user, body.lat, body.lon)
+    sys = _build_system_message(
+        user,
+        ctx,
+        extra=f"BUILD-AROUND ANCHOR ITEM: ITEM:{item['id']} ({item.get('category')}, {item.get('name') or 'unnamed'}, {item.get('color') or 'unknown color'}).",
+    )
+    session_id = f"build-{item_id}-{uuid.uuid4()}"
+    chat = _make_chat(session_id, sys)
+    msg = (
+        f"Generate 5 different complete outfits that all build around the anchor item above. "
+        f"For each outfit, list 3-5 wardrobe pieces by ITEM:<id> and add a one-line stylist note. "
+        f"Format as: Look 1: ... \\n Look 2: ... etc."
+    )
+    if body.notes:
+        msg += f"\nNotes: {body.notes}"
+    reply = await _llm_send(chat, UserMessage(text=msg))
+    valid = {it["id"] for it in (ctx["wardrobe"] or [])}
+    rec_ids = _extract_item_ids(reply, valid)
+    return {"reply": reply, "session_id": session_id, "anchor_item_id": item_id, "recommended_item_ids": rec_ids}
 
 
 # ---------------------------------------------------------------------------

@@ -32,7 +32,7 @@ export default function Signup() {
     setError(null);
     try {
       await signup(email.trim(), password, name.trim());
-      router.replace("/welcome");
+      router.replace("/onboarding" as any);
     } catch (e: any) {
       setError(e.message || "Signup failed");
     } finally {

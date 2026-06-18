@@ -119,6 +119,54 @@ export type Category = {
   built_in: boolean;
 };
 
+export type StyleProfile = {
+  user_id: string;
+  height_cm?: number | null;
+  weight_kg?: number | null;
+  age_range?: string | null;
+  gender?: string | null;
+  chest_cm?: number | null;
+  waist_cm?: number | null;
+  hips_cm?: number | null;
+  neck_cm?: number | null;
+  shoulder_cm?: number | null;
+  sleeve_cm?: number | null;
+  inseam_cm?: number | null;
+  shoe_size?: string | null;
+  body_shape?: string | null;
+  styles: string[];
+  skin_tone?: string | null;
+  hair_color?: string | null;
+  eye_color?: string | null;
+  best_colors: string[];
+  avoid_colors: string[];
+  preferred_brands: string[];
+  preferred_fits: string[];
+  avatar_b64?: string | null;
+  home_lat?: number | null;
+  home_lon?: number | null;
+  home_label?: string | null;
+  onboarded: boolean;
+  created_at: string;
+  updated_at: string;
+};
+
+export type Weather = {
+  place?: string | null;
+  lat: number;
+  lon: number;
+  temp_c: number;
+  feels_like_c: number;
+  humidity: number;
+  wind_kph: number;
+  precip_mm: number;
+  uv_index: number;
+  condition: string;
+  weather_code: number;
+  summary: string;
+  forecast: { date: string; temp_min_c: number; temp_max_c: number; precip_chance: number; condition: string }[];
+};
+
 export async function setSession(token: string, user: User) {
   await storage.secureSet(TOKEN_KEY, token);
   await storage.setItem(USER_KEY, JSON.stringify(user));
@@ -214,6 +262,27 @@ export const api = {
     request<Category>("/categories", { method: "POST", body: { name } }),
   deleteCategory: (id: string) =>
     request<{ ok: true }>(`/categories/${id}`, { method: "DELETE" }),
+
+  // profile
+  getProfile: () => request<StyleProfile>("/profile"),
+  updateProfile: (patch: Partial<StyleProfile>) =>
+    request<StyleProfile>("/profile", { method: "PATCH", body: patch }),
+
+  // weather
+  getWeather: (lat: number, lon: number) =>
+    request<Weather>(`/weather?lat=${lat}&lon=${lon}`),
+
+  // outfit gen
+  outfitGenerator: (body: { occasion: string; notes?: string; lat?: number; lon?: number }) =>
+    request<{ reply: string; session_id: string; recommended_item_ids: string[] }>(
+      "/outfit/generator",
+      { method: "POST", body },
+    ),
+  buildAround: (itemId: string, body: { notes?: string; lat?: number; lon?: number }) =>
+    request<{ reply: string; session_id: string; anchor_item_id: string; recommended_item_ids: string[] }>(
+      `/outfit/build-around/${itemId}`,
+      { method: "POST", body },
+    ),
 
   // wardrobe
   listWardrobe: (category?: string) =>

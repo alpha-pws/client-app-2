@@ -271,6 +271,15 @@ export default function Profile() {
 
           {tab === "account" && (
             <View>
+              <TouchableOpacity
+                testID="open-fit-profile"
+                style={styles.accountBox}
+                onPress={() => router.push("/profile-edit" as any)}
+              >
+                <Text style={styles.boxLabel}>STYLE AVATAR</Text>
+                <Text style={styles.accountName}>My Fit Profile</Text>
+                <Text style={styles.accountEmail}>Measurements · style · colors · location</Text>
+              </TouchableOpacity>
               <View style={styles.accountBox}>
                 <Text style={styles.boxLabel}>SIGNED IN AS</Text>
                 <Text style={styles.accountName}>{user?.name}</Text>

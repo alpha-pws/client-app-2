@@ -14,7 +14,8 @@ import {
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
-import { api, WardrobeItem } from "@/src/api";
+import { api, WardrobeItem, Weather } from "@/src/api";
+import { getCurrentCoords } from "@/src/location";
 import { useAuth } from "@/src/useAuth";
 import { colors, radii, shadows, spacing, typography } from "@/src/theme";
 
@@ -37,6 +38,8 @@ export default function Outfits() {
   const [loading, setLoading] = useState(false);
   const [session, setSession] = useState<string | undefined>(undefined);
   const [wardrobeMap, setWardrobeMap] = useState<Record<string, WardrobeItem>>({});
+  const [autoWeather, setAutoWeather] = useState<Weather | null>(null);
+  const [coords, setCoords] = useState<{ lat: number; lon: number } | null>(null);
   const listRef = useRef<FlatList<ChatMsg>>(null);
 
   const loadWardrobe = useCallback(async () => {
@@ -48,9 +51,30 @@ export default function Outfits() {
     } catch {}
   }, []);
 
+  const loadWeather = useCallback(async () => {
+    try {
+      const profile = await api.getProfile();
+      let lat = profile.home_lat ?? null;
+      let lon = profile.home_lon ?? null;
+      if (lat == null || lon == null) {
+        const c = await getCurrentCoords();
+        if (c) {
+          lat = c.lat;
+          lon = c.lon;
+        }
+      }
+      if (lat != null && lon != null) {
+        setCoords({ lat, lon });
+        const w = await api.getWeather(lat, lon);
+        setAutoWeather(w);
+      }
+    } catch {}
+  }, []);
+
   useEffect(() => {
     loadWardrobe();
-  }, [loadWardrobe]);
+    loadWeather();
+  }, [loadWardrobe, loadWeather]);
 
   const send = async (preset?: string) => {
     const msgText = (preset ?? input).trim();
@@ -65,6 +89,8 @@ export default function Outfits() {
         session_id: session,
         weather: weather || undefined,
         occasion: occasion || undefined,
+        lat: coords?.lat,
+        lon: coords?.lon,
       });
       setSession(res.session_id);
       setMessages((prev) => [
@@ -81,6 +107,28 @@ export default function Outfits() {
       setMessages((prev) => [
         ...prev,
         { id: `e-${Date.now()}`, role: "ai", text: `Hmm, something went wrong: ${e.message}` },
+      ]);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const runGenerator = async (occ: string, label: string) => {
+    if (loading) return;
+    const userMsg: ChatMsg = { id: `u-${Date.now()}`, role: "user", text: `Outfit Generator · ${label}` };
+    setMessages((prev) => [...prev, userMsg]);
+    setLoading(true);
+    try {
+      const res = await api.outfitGenerator({ occasion: occ, lat: coords?.lat, lon: coords?.lon });
+      setMessages((prev) => [
+        ...prev,
+        { id: `a-${Date.now()}`, role: "ai", text: res.reply, recommended_item_ids: res.recommended_item_ids },
+      ]);
+      setTimeout(() => listRef.current?.scrollToEnd({ animated: true }), 100);
+    } catch (e: any) {
+      setMessages((prev) => [
+        ...prev,
+        { id: `e-${Date.now()}`, role: "ai", text: `Error: ${e.message}` },
       ]);
     } finally {
       setLoading(false);
@@ -177,6 +225,48 @@ export default function Outfits() {
         <Text style={styles.kicker}>YOUR STYLIST</Text>
         <Text style={styles.heroTitle}>Style me.</Text>
       </View>
+
+      {/* Live weather pill */}
+      {autoWeather && (
+        <View style={styles.weatherPill} testID="auto-weather-pill">
+          <Ionicons name="partly-sunny-outline" size={14} color={colors.primary} />
+          <Text style={styles.weatherPillText}>
+            {autoWeather.place ? `${autoWeather.place} · ` : ""}
+            {Math.round(autoWeather.temp_c)}°C · {autoWeather.condition}
+          </Text>
+        </View>
+      )}
+
+      {/* Outfit generator presets */}
+      <ScrollView
+        horizontal
+        showsHorizontalScrollIndicator={false}
+        style={styles.genRowWrap}
+        contentContainerStyle={styles.genRow}
+      >
+        {[
+          { id: "work", label: "Work" },
+          { id: "weekend", label: "Weekend" },
+          { id: "date_night", label: "Date Night" },
+          { id: "travel", label: "Travel" },
+          { id: "wedding", label: "Wedding" },
+          { id: "casual", label: "Casual" },
+          { id: "formal", label: "Formal" },
+          { id: "hot_weather", label: "Hot" },
+          { id: "cold_weather", label: "Cold" },
+        ].map((g) => (
+          <TouchableOpacity
+            key={g.id}
+            testID={`outfit-gen-${g.id}`}
+            style={styles.genChip}
+            onPress={() => runGenerator(g.id, g.label)}
+            disabled={loading}
+          >
+            <Ionicons name="sparkles" size={12} color={colors.primary} />
+            <Text style={styles.genChipText}>{g.label}</Text>
+          </TouchableOpacity>
+        ))}
+      </ScrollView>
 
       {/* Context inputs */}
       <View style={styles.contextRow}>
@@ -289,6 +379,36 @@ const styles = StyleSheet.create({
   header: { paddingHorizontal: 20, paddingTop: spacing.lg, paddingBottom: spacing.sm },
   kicker: { ...typography.label, color: colors.primary },
   heroTitle: { ...typography.display, marginTop: 8 },
+  weatherPill: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    alignSelf: "flex-start",
+    marginHorizontal: 20,
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: radii.pill,
+    backgroundColor: colors.surfaceSoft,
+    borderWidth: 1,
+    borderColor: colors.border,
+    marginBottom: spacing.sm,
+  },
+  weatherPillText: { fontSize: 12, fontWeight: "600", color: colors.text },
+  genRowWrap: { maxHeight: 52, flexGrow: 0 },
+  genRow: { paddingHorizontal: 20, gap: 8, alignItems: "center", height: 52 },
+  genChip: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: radii.pill,
+    backgroundColor: colors.surface,
+    borderWidth: 1,
+    borderColor: colors.border,
+    flexShrink: 0,
+  },
+  genChipText: { fontSize: 12, fontWeight: "700", color: colors.text },
 
   contextRow: { flexDirection: "row", gap: 10, paddingHorizontal: 20, marginTop: spacing.md, marginBottom: spacing.sm },
   contextInputWrap: {
