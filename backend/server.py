@@ -111,6 +111,8 @@ class SignupBody(BaseModel):
     email: EmailStr
     password: str = Field(min_length=6)
     name: str = Field(min_length=1, max_length=60)
+    birth_year: Optional[int] = Field(default=None, ge=1900, le=2100)
+    guardian_email: Optional[EmailStr] = None
 
 
 class LoginBody(BaseModel):
@@ -346,8 +348,31 @@ async def _llm_send(chat: LlmChat, user_msg: UserMessage) -> str:
 # ---------------------------------------------------------------------------
 # Auth routes
 # ---------------------------------------------------------------------------
+MIN_AGE = 13
+
+
 @api_router.post("/auth/signup", response_model=AuthResponse)
 async def signup(body: SignupBody):
+    # Age gate (13+ with guardian email when under 18)
+    age: Optional[int] = None
+    if body.birth_year:
+        try:
+            from datetime import datetime as _dt
+            age = _dt.utcnow().year - int(body.birth_year)
+        except Exception:
+            age = None
+    if age is not None:
+        if age < MIN_AGE:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Sorry — Closet AI requires users to be at least {MIN_AGE} years old.",
+            )
+        if age < 18 and not body.guardian_email:
+            raise HTTPException(
+                status_code=400,
+                detail="Users under 18 need a parent or guardian's email for permission.",
+            )
+
     existing = await db.users.find_one({"email": body.email.lower()})
     if existing:
         raise HTTPException(status_code=409, detail="Email already registered")
@@ -357,10 +382,16 @@ async def signup(body: SignupBody):
         "name": body.name.strip(),
         "password_hash": hash_password(body.password),
         "avatar": None,
+        "birth_year": body.birth_year,
+        "guardian_email": body.guardian_email.lower() if body.guardian_email else None,
+        "guardian_consent": "pending" if (age is not None and age < 18 and body.guardian_email) else None,
         "created_at": utc_now(),
     }
     await db.users.insert_one(user)
-    # seed default brands for this user (none — brands are global popular + per-user custom)
+    logger.info(
+        "auth.signup ok (user=%s, age=%s, guardian=%s)",
+        user["id"], age, "yes" if user.get("guardian_email") else "no",
+    )
     token = create_token(user["id"])
     return AuthResponse(token=token, user=user_to_public(user))
 
@@ -388,10 +419,30 @@ def _wardrobe_doc_to_model(d: dict) -> WardrobeItem:
 
 @api_router.post("/wardrobe", response_model=WardrobeItem)
 async def create_wardrobe_item(body: WardrobeItemCreate, user: dict = Depends(get_current_user)):
+    # ----- Image validation -----
+    raw_b64 = body.image_base64 or ""
+    if "," in raw_b64[:80]:
+        # strip data-uri prefix if present
+        raw_b64 = raw_b64.split(",", 1)[1]
+    approx_bytes = (len(raw_b64) * 3) // 4
+    MAX_BYTES = 6 * 1024 * 1024  # 6 MB after base64 → ~4.5 MB binary
+    if approx_bytes <= 0:
+        logger.warning("wardrobe.add rejected: empty image (user=%s)", user["id"])
+        raise HTTPException(status_code=400, detail="Photo is empty.")
+    if approx_bytes > MAX_BYTES:
+        logger.warning(
+            "wardrobe.add rejected: image too large (user=%s, bytes=%d, max=%d)",
+            user["id"], approx_bytes, MAX_BYTES,
+        )
+        raise HTTPException(
+            status_code=413,
+            detail=f"Photo too large ({approx_bytes // 1024} KB). Try a smaller image.",
+        )
+
     item = {
         "id": str(uuid.uuid4()),
         "user_id": user["id"],
-        "image_base64": body.image_base64,
+        "image_base64": raw_b64,
         "category": body.category,
         "name": body.name,
         "color": body.color,
@@ -400,7 +451,15 @@ async def create_wardrobe_item(body: WardrobeItemCreate, user: dict = Depends(ge
         "tags": body.tags,
         "created_at": utc_now(),
     }
-    await db.wardrobe.insert_one(item)
+    try:
+        await db.wardrobe.insert_one(item)
+    except Exception as e:
+        logger.exception("wardrobe.add insert failed (user=%s): %s", user["id"], e)
+        raise HTTPException(status_code=500, detail="Could not save item right now.")
+    logger.info(
+        "wardrobe.add success (user=%s, cat=%s, bytes=%d)",
+        user["id"], body.category, approx_bytes,
+    )
     return _wardrobe_doc_to_model(item)
 
 

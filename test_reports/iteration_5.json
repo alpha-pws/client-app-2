@@ -1,0 +1,44 @@
+{
+  "summary": "Phase 1 audit tests for ClosetAI — all 3 features PASS end-to-end (backend 10/10 pytest + frontend Playwright). (A) POST /api/wardrobe: empty image_base64 -> 400 'Photo is empty.'; ~9 MB base64 -> 413 'Photo too large…'; data-URI prefix correctly stripped before storage (returned item.image_base64 does NOT start with 'data:'); successful upload returns full WardrobeItem and emits `wardrobe.add success` log line in backend.err.log. GET-after-POST persistence verified. (B) POST /api/auth/signup age gate: birth_year=1990 -> 200; birth_year=2012 without guardian_email -> 400 'parent or guardian'; birth_year=2012 with guardian_email='parent@example.com' -> 200 (logger reports 'guardian=yes' so guardian_consent='pending' is stored); birth_year=2015 (age 11) -> 400 'at least 13'; omitting birth_year -> 200 (back-compat). (C) Frontend: /wardrobe/add renders camera-button + gallery-button + save-item-button (disabled correctly); upload-progress and upload-error-card hidden by default (state-driven, as expected). Profile→Account renders avatar-dashboard with avatar-completion-bar at 28% (width 77 px, non-zero), exactly 18 avatar-row-* entries (height_cm, weight_kg, age_range, gender, shoe_size, chest_cm, waist_cm, hips_cm, inseam_cm, shoulder_cm, preferred_fits, styles, best_colors, preferred_brands, skin_tone, hair_color, eye_color, home_label); avatar-edit-all and avatar-complete-missing tappable. Tapping avatar-row-shoe_size deep-links to /profile-edit?mode=edit&step=body and renders onboarding-screen with onboard-height='175' and onboard-weight='68' pre-filled — proving persistence fix. Signup screen: birth_year=2015 -> submit disabled + 'You must be at least 13' helper; birth_year=2012 -> signup-guardian-section and signup-guardian-email-input render, age display 'You are 14 years old.'; birth_year=1990 -> guardian section gone, age display 'You are 36 years old.', submit enabled. (D) GET/PATCH /api/profile regression verified.",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [],
+    "react_native_issues": [
+      {"component": "RN-web style deprecation", "issue": "Console warning still present: '\"shadow*\" style props are deprecated. Use \"boxShadow\"'. Carried over from previous iteration; non-blocking on native, only noisy on web. Source: /app/frontend/src/theme.ts shadows.soft."},
+      {"component": "RN-web pointerEvents deprecation", "issue": "Console warning: 'props.pointerEvents is deprecated. Use style.pointerEvents'. From third-party RN component on web; non-blocking."},
+      {"component": "expo-notifications web", "issue": "Console warning: '[expo-notifications] Listening to push token changes is not yet fully supported on web. Adding a listener will have no effect.' Expected on web preview only."}
+    ]
+  },
+  "test_report_links": [
+    "/app/test_reports/iteration_5.json",
+    "/app/test_reports/pytest/pytest_phase1.xml",
+    "/app/backend/tests/test_phase1_audit.py"
+  ],
+  "action_items": [
+    "Optional (minor UX): when age<13, the signup-age-display testID is hidden and only the red error helper shows. Spec asked that age display ALSO render ('11 years old'). Consider keeping age-display visible even when tooYoung so users see both '11 years old' and the 'must be at least 13' message. Non-blocking.",
+    "Optional (carried from iter4): migrate `shadow*` style props to `boxShadow` in /app/frontend/src/theme.ts to silence RN-web deprecation warnings.",
+    "All Phase 1 audit features are working — no functional fixes required."
+  ],
+  "critical_code_review_comments": [
+    "/app/backend/server.py wardrobe POST validates correctly: line 423-440 handle empty (400), too-large (413), and data-uri-prefix stripping at line 424-426. logger.info 'wardrobe.add success' emitted at line 459-462 confirmed in logs.",
+    "/app/backend/server.py signup at line 354-396 enforces MIN_AGE=13 (line 351), requires guardian_email when age<18, stores guardian_consent='pending' (line 387). All branches covered by tests.",
+    "/app/frontend/src/components/AvatarDashboard.tsx line 49-68 defines all 18 ROWS correctly. useFocusEffect re-loads profile on focus so post-edit returns refresh the completion meter.",
+    "/app/frontend/app/(auth)/signup.tsx line 31-38 derives age + needsGuardian + tooYoung from birth_year; submit button correctly disabled when tooYoung (line 166)."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_phase1_audit.py (new)",
+    "/app/test_result.md (updated working flags + status_history)",
+    "/app/test_reports/iteration_5.json (new)"
+  ],
+  "success_rate": {"backend": "100% (10/10 pytest)", "frontend": "100% (3/3 flows verified)"},
+  "seed_data_creation": "Created ~6 ephemeral QA signup users (qa+upload_*, qa+adult_*, qa+teen14_*, qa+teen14g_*, qa+kid11 rejected before insert, qa+noby_*) and 2 wardrobe items under those QA accounts (one with data-uri prefix, one plain). Items were DELETEd at end of each test method. No changes to test@closetai.com profile beyond a no-op PATCH (height_cm=175, weight_kg=68 re-saved to same values).",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Phase 1 audit (closet upload hardening + avatar dashboard + age 13+ signup) is fully working. The Avatar Dashboard implementation in /app/frontend/src/components/AvatarDashboard.tsx is solid and reused by Profile→Account. The /profile-edit route is just `export { default } from './onboarding'` which correctly preloads existing profile data so users don't start over. Backend wardrobe POST has clean 400/413/200 paths. Signup backend enforces MIN_AGE=13 and requires guardian_email for <18. Test credentials for test@closetai.com / test1234 work; profile has height_cm=175, weight_kg=68. Pre-existing iter4 finding (POST /api/wishlist/{id}/compare 500 on stale id) not retested this round.",
+  "rca_of_issue": "N/A — no bugs found in Phase 1 audit scope."
+}

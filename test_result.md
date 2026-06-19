@@ -194,12 +194,67 @@ test_plan:
 agent_communication:
     - agent: "main"
       message: |
-        Frontend TypeScript build is unblocked. Three "Big Vision" features need frontend validation:
-        1. Onboarding flow at /onboarding (Style Avatar steps).
-        2. Outfit generator preset chips on the Stylist tab + auto-weather pill.
-        3. New 'Build Around This Item' button on wardrobe item detail screen — opens a modal with AI recommendations.
-        Credentials in /app/memory/test_credentials.md (test@closetai.com / test1234). Test user already has wardrobe items.
-        Please use the QA-build deep link `/onboarding` to test onboarding even if the test user already onboarded — they can navigate manually for now.
+        Phase 1 of the Big Audit complete. Three high-impact features added:
+        1. **Closet upload hardening** — client-side compression (expo-image-manipulator, resize≤1600px, JPEG q=0.7), 3-attempt exponential-backoff retry with per-attempt timeout, granular HTTP error mapping, cancel button, structured backend logging, and 413 guard for >6 MB. File: /app/frontend/src/upload.ts + /app/frontend/app/wardrobe/add.tsx + /app/backend/server.py.
+        2. **Avatar/Profile persistence dashboard** — new `AvatarDashboard` (/app/frontend/src/components/AvatarDashboard.tsx) on Profile→Account showing all 18 fields with completion %, "Not provided" placeholders, per-row deep-link to /profile-edit?mode=edit&step=… Edit screen now preloads existing values from /api/profile so users never start over.
+        3. **Age 13+ with guardian consent** — signup screen now asks for birth year; computes age; rejects <13 with friendly copy; for 13–17, reveals guardian-email field which is saved server-side with `guardian_consent: "pending"`.
+        Confirmed via backend logs that compressed photo uploads succeed at ~280 KB (was previously failing at multi-MB).
+        Please run frontend test covering: (a) Add Photo flow with progress/error UI; (b) Profile→Account Avatar Dashboard rendering with values & completion meter; (c) signup happy paths for adult, 13–17, and <13 (just frontend validation — the dialog blocks submission).
+
+test_plan:
+  current_focus:
+    - "Closet upload hardening (compression + retry + progress + error UX)"
+    - "Avatar & Profile persistence dashboard"
+    - "Age 13+ signup with guardian consent"
+  stuck_tasks: []
+  test_all: false
+  test_priority: "high_first"
+
+frontend:
+  - task: "Closet upload hardening (compression + retry + progress + error UX)"
+    implemented: true
+    working: true
+    file: "/app/frontend/app/wardrobe/add.tsx"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+        - working: "NA"
+          agent: "main"
+          comment: "Compresses images via expo-image-manipulator before upload; shows progress bar with stage labels (Optimizing/Uploading/Retrying); retries 3x with backoff; cancel button; mapped HTTP error to friendly messages with try-again and pick-another-photo actions. Server logs include user, category, bytes."
+        - working: true
+          agent: "testing"
+          comment: "PASS (iteration_5). Backend: POST /api/wardrobe rejects empty image_base64 with 400 'Photo is empty.'; rejects 9 MB base64 with 413 'too large'; strips data:image/jpeg;base64, prefix and creates item (200); successful upload returns full WardrobeItem and `wardrobe.add success` log line confirmed in backend.err.log. Frontend: /wardrobe/add renders camera-button + gallery-button + save-item-button (disabled until photo). upload-progress and upload-error-card correctly hidden by default (state-driven)."
+
+  - task: "Avatar & Profile persistence dashboard"
+    implemented: true
+    working: true
+    file: "/app/frontend/src/components/AvatarDashboard.tsx"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+        - working: "NA"
+          agent: "main"
+          comment: "Profile→Account now shows AvatarDashboard with completion % meter, 18 measurement/preference rows each with value or 'Not provided · tap to add'. Tapping a row routes to /profile-edit?mode=edit&step=<step>. Onboarding preloads existing values and routes back to /profile in edit mode."
+        - working: true
+          agent: "testing"
+          comment: "PASS (iteration_5). avatar-dashboard renders; completion bar (avatar-completion-bar) width 77 px / 28% complete; exactly 18 avatar-row-* entries (height_cm, weight_kg, age_range, gender, shoe_size, chest_cm, waist_cm, hips_cm, inseam_cm, shoulder_cm, preferred_fits, styles, best_colors, preferred_brands, skin_tone, hair_color, eye_color, home_label); avatar-edit-all and avatar-complete-missing tappable. Tapping avatar-row-shoe_size navigates to /profile-edit?mode=edit&step=body and onboarding-screen testID is visible. Critical persistence check: onboard-height value pre-fills to '175' and onboard-weight pre-fills to '68' — values are correctly preloaded from /api/profile so user does not start over."
+
+  - task: "Age 13+ signup with guardian consent"
+    implemented: true
+    working: true
+    file: "/app/frontend/app/(auth)/signup.tsx"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+        - working: "NA"
+          agent: "main"
+          comment: "Signup form adds Year-of-birth field. Computes age. <13 disables submit & shows red error. 13–17 reveals guardian email card. Backend enforces age >=13 (HTTP 400) and requires guardian_email if <18 (HTTP 400). guardian_consent stored as 'pending'."
+        - working: true
+          agent: "testing"
+          comment: "PASS (iteration_5). Backend: adult (birth_year=1990) -> 200; age 14 without guardian -> 400 'parent or guardian'; age 14 with guardian_email -> 200 (user.guardian_consent=pending per logger 'guardian=yes'); age 11 (birth_year=2015) -> 400 'at least 13'; omitted birth_year -> 200 (back-compat). Frontend: birth_year=2015 disables submit and shows 'You must be at least 13 to use Closet AI.' helper; birth_year=2012 reveals signup-guardian-section + signup-guardian-email-input, age-display shows 'You are 14 years old.'; birth_year=1990 hides guardian section, age-display shows 'You are 36 years old.', submit enabled. Minor spec deviation: when age<13, signup-age-display testID is hidden (red error helper used instead) — non-blocking."
     - agent: "testing"
       message: |
         iteration_4 frontend testing — ALL 3 Big Vision tasks PASS. Details in /app/test_reports/iteration_4.json.

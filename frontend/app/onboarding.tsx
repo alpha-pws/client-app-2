@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import {
   ActivityIndicator,
   KeyboardAvoidingView,
@@ -13,7 +13,7 @@ import {
   Alert,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
-import { useRouter } from "expo-router";
+import { useLocalSearchParams, useRouter } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
 import { api } from "@/src/api";
 import { ensureLocationPermission, getCurrentCoords } from "@/src/location";
@@ -40,7 +40,11 @@ type Step = "intro" | "body" | "style" | "color" | "location" | "done";
 
 export default function Onboarding() {
   const router = useRouter();
-  const [step, setStep] = useState<Step>("intro");
+  const params = useLocalSearchParams<{ mode?: string; step?: string }>();
+  const isEdit = params.mode === "edit";
+  const [step, setStep] = useState<Step>(
+    (params.step as Step) || (isEdit ? "body" : "intro"),
+  );
   const [height, setHeight] = useState("");
   const [weight, setWeight] = useState("");
   const [ageRange, setAgeRange] = useState<string | null>(null);
@@ -57,6 +61,41 @@ export default function Onboarding() {
   const [saving, setSaving] = useState(false);
   const [locStatus, setLocStatus] = useState<"idle" | "loading" | "done" | "denied">("idle");
   const [locLabel, setLocLabel] = useState<string | null>(null);
+  const [loadingProfile, setLoadingProfile] = useState(false);
+
+  // Preload existing profile data so users never start over.
+  useEffect(() => {
+    let active = true;
+    (async () => {
+      setLoadingProfile(true);
+      try {
+        const p = await api.getProfile();
+        if (!active) return;
+        if (p.height_cm != null) setHeight(String(p.height_cm));
+        if (p.weight_kg != null) setWeight(String(p.weight_kg));
+        if (p.age_range) setAgeRange(p.age_range);
+        if (p.gender) setGender(p.gender);
+        if (p.shoe_size) setShoeSize(p.shoe_size);
+        if (p.chest_cm != null) setChest(String(p.chest_cm));
+        if (p.waist_cm != null) setWaist(String(p.waist_cm));
+        if (p.hips_cm != null) setHips(String(p.hips_cm));
+        if (p.styles?.length) setSelectedStyles(p.styles);
+        if (p.skin_tone) setSkinTone(p.skin_tone);
+        if (p.hair_color) setHairColor(p.hair_color);
+        if (p.eye_color) setEyeColor(p.eye_color);
+        if (p.best_colors?.length) setBestColors(p.best_colors.join(", "));
+        if (p.home_label) setLocLabel(p.home_label);
+        if (p.home_lat != null && p.home_lon != null) setLocStatus("done");
+      } catch {
+        // ignore — first-time users have no profile yet
+      } finally {
+        if (active) setLoadingProfile(false);
+      }
+    })();
+    return () => {
+      active = false;
+    };
+  }, []);
 
   const toggleStyle = (id: string) => {
     setSelectedStyles((prev) => (prev.includes(id) ? prev.filter((s) => s !== id) : [...prev, id]));
@@ -104,7 +143,11 @@ export default function Onboarding() {
       if (eyeColor) patch.eye_color = eyeColor;
       if (bestColors) patch.best_colors = bestColors.split(",").map((s) => s.trim()).filter(Boolean);
       await api.updateProfile(patch);
-      router.replace("/welcome");
+      if (isEdit) {
+        router.back();
+      } else {
+        router.replace("/welcome");
+      }
     } catch (e: any) {
       Alert.alert("Failed", e.message);
     } finally {
@@ -116,7 +159,11 @@ export default function Onboarding() {
     try {
       await api.updateProfile({ onboarded: true });
     } catch {}
-    router.replace("/welcome");
+    if (isEdit) {
+      router.back();
+    } else {
+      router.replace("/welcome");
+    }
   };
 
   const next = () => {

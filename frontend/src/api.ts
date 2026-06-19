@@ -193,9 +193,9 @@ export async function getStoredUser(): Promise<User | null> {
 
 async function request<T>(
   path: string,
-  options: { method?: string; body?: unknown; auth?: boolean } = {},
+  options: { method?: string; body?: unknown; auth?: boolean; signal?: AbortSignal } = {},
 ): Promise<T> {
-  const { method = "GET", body, auth = true } = options;
+  const { method = "GET", body, auth = true, signal } = options;
   const headers: Record<string, string> = { "Content-Type": "application/json" };
   if (auth) {
     const token = await getToken();
@@ -205,6 +205,7 @@ async function request<T>(
     method,
     headers,
     body: body ? JSON.stringify(body) : undefined,
+    signal,
   });
   if (!res.ok) {
     let detail = "Request failed";
@@ -214,7 +215,8 @@ async function request<T>(
     } catch {
       detail = await res.text();
     }
-    throw new Error(detail);
+    // Prefix with HTTP <status> so upload.ts can classify it.
+    throw new Error(`HTTP ${res.status}: ${detail}`);
   }
   if (res.status === 204) return undefined as T;
   return (await res.json()) as T;
@@ -222,10 +224,15 @@ async function request<T>(
 
 export const api = {
   // auth
-  signup: (email: string, password: string, name: string) =>
+  signup: (
+    email: string,
+    password: string,
+    name: string,
+    extras?: { birth_year?: number; guardian_email?: string },
+  ) =>
     request<{ token: string; user: User }>("/auth/signup", {
       method: "POST",
-      body: { email, password, name },
+      body: { email, password, name, ...(extras || {}) },
       auth: false,
     }),
   login: (email: string, password: string) =>
@@ -287,15 +294,18 @@ export const api = {
   // wardrobe
   listWardrobe: (category?: string) =>
     request<WardrobeItem[]>(`/wardrobe${category ? `?category=${category}` : ""}`),
-  addWardrobeItem: (body: {
-    image_base64: string;
-    category: string;
-    name?: string;
-    color?: string;
-    rating?: number;
-    privacy?: string;
-    tags?: string[];
-  }) => request<WardrobeItem>("/wardrobe", { method: "POST", body }),
+  addWardrobeItem: (
+    body: {
+      image_base64: string;
+      category: string;
+      name?: string;
+      color?: string;
+      rating?: number;
+      privacy?: string;
+      tags?: string[];
+    },
+    signal?: AbortSignal,
+  ) => request<WardrobeItem>("/wardrobe", { method: "POST", body, signal }),
   updateWardrobeItem: (
     id: string,
     body: Partial<{

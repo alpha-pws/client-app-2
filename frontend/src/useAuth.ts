@@ -38,8 +38,13 @@ export function useAuth() {
     setUser(res.user);
   };
 
-  const signup = async (email: string, password: string, name: string) => {
-    const res = await api.signup(email, password, name);
+  const signup = async (
+    email: string,
+    password: string,
+    name: string,
+    extras?: { birth_year?: number; guardian_email?: string },
+  ) => {
+    const res = await api.signup(email, password, name, extras);
     await setSession(res.token, res.user);
     setUser(res.user);
   };

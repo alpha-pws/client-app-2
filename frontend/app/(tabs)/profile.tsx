@@ -17,6 +17,7 @@ import { SafeAreaView } from "react-native-safe-area-context";
 import { useFocusEffect, useRouter } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
 import { api, Brand, WishlistItem } from "@/src/api";
+import { AvatarDashboard } from "@/src/components/AvatarDashboard";
 import { useAuth } from "@/src/useAuth";
 import { colors, spacing, typography } from "@/src/theme";
 
@@ -271,16 +272,8 @@ export default function Profile() {
 
           {tab === "account" && (
             <View>
-              <TouchableOpacity
-                testID="open-fit-profile"
-                style={styles.accountBox}
-                onPress={() => router.push("/profile-edit" as any)}
-              >
-                <Text style={styles.boxLabel}>STYLE AVATAR</Text>
-                <Text style={styles.accountName}>My Fit Profile</Text>
-                <Text style={styles.accountEmail}>Measurements · style · colors · location</Text>
-              </TouchableOpacity>
-              <View style={styles.accountBox}>
+              <AvatarDashboard />
+              <View style={[styles.accountBox, { marginTop: spacing.lg }]}>
                 <Text style={styles.boxLabel}>SIGNED IN AS</Text>
                 <Text style={styles.accountName}>{user?.name}</Text>
                 <Text style={styles.accountEmail}>{user?.email}</Text>

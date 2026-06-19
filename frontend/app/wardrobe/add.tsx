@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
@@ -19,6 +19,14 @@ import { useRouter } from "expo-router";
 import * as ImagePicker from "expo-image-picker";
 import { Ionicons } from "@expo/vector-icons";
 import { api, Category } from "@/src/api";
+import {
+  compressImage,
+  isUploadError,
+  MAX_BASE64_BYTES,
+  UploadError,
+  UploadProgress,
+  withRetry,
+} from "@/src/upload";
 import { colors, spacing, typography } from "@/src/theme";
 
 const PRIVACY = [
@@ -29,7 +37,8 @@ const PRIVACY = [
 
 export default function AddWardrobe() {
   const router = useRouter();
-  const [imageB64, setImageB64] = useState<string | null>(null);
+  const [imageUri, setImageUri] = useState<string | null>(null);
+  const [imageSizeBytes, setImageSizeBytes] = useState<number | null>(null);
   const [category, setCategory] = useState<string>("tops");
   const [categories, setCategories] = useState<Category[]>([]);
   const [name, setName] = useState("");
@@ -41,10 +50,16 @@ export default function AddWardrobe() {
   const [showCatModal, setShowCatModal] = useState(false);
   const [newCatName, setNewCatName] = useState("");
   const [addingCat, setAddingCat] = useState(false);
+  const [progress, setProgress] = useState<UploadProgress | null>(null);
+  const [uploadError, setUploadError] = useState<UploadError | null>(null);
+  const abortRef = useRef<AbortController | null>(null);
 
   useEffect(() => {
     api.listCategories().then(setCategories).catch(() => {});
   }, []);
+
+  // Cancel in-flight upload if user leaves screen.
+  useEffect(() => () => abortRef.current?.abort(), []);
 
   const addCustomCategory = async () => {
     if (!newCatName.trim()) return;
@@ -112,16 +127,17 @@ export default function AddWardrobe() {
 
   const fromCamera = async () => {
     setRequesting(true);
+    setUploadError(null);
     try {
       if (!(await ensureCameraPermission())) return;
       const r = await ImagePicker.launchCameraAsync({
         mediaTypes: ImagePicker.MediaTypeOptions.Images,
         allowsEditing: true,
-        quality: 0.7,
-        base64: true,
+        quality: 1, // capture full quality; we compress on save
       });
-      if (!r.canceled && r.assets[0]?.base64) {
-        setImageB64(r.assets[0].base64);
+      if (!r.canceled && r.assets[0]?.uri) {
+        setImageUri(r.assets[0].uri);
+        setImageSizeBytes(r.assets[0].fileSize ?? null);
       }
     } finally {
       setRequesting(false);
@@ -130,16 +146,17 @@ export default function AddWardrobe() {
 
   const fromGallery = async () => {
     setRequesting(true);
+    setUploadError(null);
     try {
       if (!(await ensureGalleryPermission())) return;
       const r = await ImagePicker.launchImageLibraryAsync({
         mediaTypes: ImagePicker.MediaTypeOptions.Images,
         allowsEditing: true,
-        quality: 0.7,
-        base64: true,
+        quality: 1,
       });
-      if (!r.canceled && r.assets[0]?.base64) {
-        setImageB64(r.assets[0].base64);
+      if (!r.canceled && r.assets[0]?.uri) {
+        setImageUri(r.assets[0].uri);
+        setImageSizeBytes(r.assets[0].fileSize ?? null);
       }
     } finally {
       setRequesting(false);
@@ -147,26 +164,87 @@ export default function AddWardrobe() {
   };
 
   const save = async () => {
-    if (!imageB64) {
+    if (!imageUri) {
       Alert.alert("Photo required", "Take or pick a photo first.");
       return;
     }
     setSaving(true);
+    setUploadError(null);
+    setProgress({ stage: "compressing", attempt: 0, totalAttempts: 3, percent: 10, message: "Optimizing photo…" });
+
+    const controller = new AbortController();
+    abortRef.current = controller;
+
     try {
-      await api.addWardrobeItem({
-        image_base64: imageB64,
-        category,
-        name: name || undefined,
-        color: color || undefined,
-        rating,
-        privacy,
+      // 1) Compress.
+      const compressed = await compressImage(imageUri);
+      if (compressed.approxBytes > MAX_BASE64_BYTES) {
+        // eslint-disable-next-line no-console
+        console.warn("[upload] still too large after compression", {
+          approxBytes: compressed.approxBytes,
+          max: MAX_BASE64_BYTES,
+        });
+        setUploadError({
+          code: "too_large",
+          message: "Photo is still too large after compression. Try a smaller or simpler image.",
+          attempts: 0,
+        });
+        return;
+      }
+      setProgress({
+        stage: "uploading",
+        attempt: 1,
+        totalAttempts: 3,
+        percent: 35,
+        message: "Uploading to closet…",
       });
+
+      // 2) Upload with retry + per-attempt timeout.
+      await withRetry(
+        (signal) =>
+          api.addWardrobeItem(
+            {
+              image_base64: compressed.base64,
+              category,
+              name: name || undefined,
+              color: color || undefined,
+              rating,
+              privacy,
+            },
+            signal,
+          ),
+        {
+          totalAttempts: 3,
+          baseDelayMs: 600,
+          timeoutMs: 60_000,
+          abortSignal: controller.signal,
+          onProgress: setProgress,
+        },
+      );
+
       router.back();
     } catch (e: any) {
-      Alert.alert("Save failed", e.message);
+      if (isUploadError(e)) {
+        setUploadError(e);
+        // eslint-disable-next-line no-console
+        console.error("[upload] failed", e);
+      } else {
+        setUploadError({
+          code: "unknown",
+          message: e?.message || "Upload failed for an unknown reason.",
+          attempts: 0,
+        });
+        // eslint-disable-next-line no-console
+        console.error("[upload] non-classified failure", e);
+      }
     } finally {
+      abortRef.current = null;
       setSaving(false);
     }
+  };
+
+  const cancelUpload = () => {
+    abortRef.current?.abort();
   };
 
   return (
@@ -181,13 +259,27 @@ export default function AddWardrobe() {
 
       <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === "ios" ? "padding" : undefined}>
         <ScrollView contentContainerStyle={{ padding: spacing.xl, paddingBottom: 120 }} keyboardShouldPersistTaps="handled">
-          {imageB64 ? (
+          {imageUri ? (
             <View>
-              <Image source={{ uri: `data:image/jpeg;base64,${imageB64}` }} style={styles.preview} />
-              <TouchableOpacity testID="retake-button" style={styles.retakeBtn} onPress={() => setImageB64(null)}>
+              <Image source={{ uri: imageUri }} style={styles.preview} />
+              <TouchableOpacity
+                testID="retake-button"
+                style={styles.retakeBtn}
+                onPress={() => {
+                  setImageUri(null);
+                  setImageSizeBytes(null);
+                  setUploadError(null);
+                }}
+                disabled={saving}
+              >
                 <Ionicons name="refresh" size={14} color={colors.primary} />
                 <Text style={styles.retakeText}>Retake / Re-pick</Text>
               </TouchableOpacity>
+              {imageSizeBytes != null && (
+                <Text style={styles.imageMeta}>
+                  Original: {(imageSizeBytes / 1024 / 1024).toFixed(2)} MB · auto-compressed before upload
+                </Text>
+              )}
             </View>
           ) : (
             <View style={styles.captureRow}>
@@ -303,11 +395,66 @@ export default function AddWardrobe() {
             })}
           </View>
 
+          {progress && saving && (
+            <View style={styles.progressCard} testID="upload-progress">
+              <View style={styles.progressHeaderRow}>
+                <Text style={styles.progressTitle}>
+                  {progress.stage === "compressing" && "Optimizing"}
+                  {progress.stage === "uploading" && "Uploading"}
+                  {progress.stage === "retrying" && `Retrying ${progress.attempt}/${progress.totalAttempts}`}
+                  {progress.stage === "done" && "Done"}
+                  {progress.stage === "error" && "Error"}
+                </Text>
+                <TouchableOpacity testID="cancel-upload-button" onPress={cancelUpload}>
+                  <Text style={styles.cancelLink}>Cancel</Text>
+                </TouchableOpacity>
+              </View>
+              <View style={styles.progressBarTrack}>
+                <View style={[styles.progressBarFill, { width: `${Math.min(100, Math.max(8, progress.percent))}%` }]} />
+              </View>
+              {!!progress.message && <Text style={styles.progressMsg}>{progress.message}</Text>}
+            </View>
+          )}
+
+          {uploadError && !saving && (
+            <View style={styles.errorCard} testID="upload-error-card">
+              <Ionicons name="alert-circle" size={18} color={colors.accent} />
+              <View style={{ flex: 1, marginLeft: 8 }}>
+                <Text style={styles.errorTitle}>{uploadError.message}</Text>
+                {uploadError.detail && (
+                  <Text style={styles.errorDetail} numberOfLines={3}>
+                    {uploadError.detail}
+                  </Text>
+                )}
+                <View style={{ flexDirection: "row", gap: 8, marginTop: 10 }}>
+                  <TouchableOpacity
+                    testID="upload-retry-button"
+                    style={styles.retryBtn}
+                    onPress={save}
+                  >
+                    <Ionicons name="refresh" size={14} color={colors.primaryFg} />
+                    <Text style={styles.retryBtnText}>Try again</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    testID="upload-pick-other-button"
+                    style={styles.retryBtnGhost}
+                    onPress={() => {
+                      setImageUri(null);
+                      setUploadError(null);
+                    }}
+                  >
+                    <Text style={styles.retryBtnGhostText}>Choose another photo</Text>
+                  </TouchableOpacity>
+                </View>
+              </View>
+            </View>
+          )}
+
           <TouchableOpacity
             testID="save-item-button"
-            style={[styles.saveBtn, (saving || !imageB64) && { opacity: 0.5 }]}
+            style={[styles.saveBtn, (saving || !imageUri) && { opacity: 0.5 }]}
             onPress={save}
-            disabled={saving || !imageB64}
+            disabled={saving || !imageUri}
           >
             {saving ? (
               <ActivityIndicator color={colors.primaryFg} />
@@ -453,4 +600,46 @@ const styles = StyleSheet.create({
     marginTop: spacing.xxl,
   },
   saveBtnText: { color: colors.primaryFg, fontWeight: "800", letterSpacing: 1, fontSize: 13 },
+  imageMeta: { fontSize: 11, color: colors.mutedFg, marginTop: 6, paddingHorizontal: 4 },
+  progressCard: {
+    marginTop: spacing.lg,
+    padding: spacing.md,
+    borderWidth: 1,
+    borderColor: colors.border,
+    backgroundColor: colors.surface,
+    gap: 8,
+  },
+  progressHeaderRow: { flexDirection: "row", alignItems: "center", justifyContent: "space-between" },
+  progressTitle: { fontSize: 12, fontWeight: "800", letterSpacing: 1.4, color: colors.primary },
+  cancelLink: { fontSize: 12, fontWeight: "700", color: colors.accent },
+  progressBarTrack: { height: 6, backgroundColor: colors.muted, overflow: "hidden", borderRadius: 3 },
+  progressBarFill: { height: "100%", backgroundColor: colors.primary },
+  progressMsg: { fontSize: 12, color: colors.mutedFg },
+  errorCard: {
+    flexDirection: "row",
+    alignItems: "flex-start",
+    backgroundColor: "#FBEDEC",
+    borderWidth: 1,
+    borderColor: colors.accent,
+    padding: 12,
+    marginTop: spacing.lg,
+  },
+  errorTitle: { fontSize: 13.5, fontWeight: "700", color: colors.primary },
+  errorDetail: { fontSize: 11, color: colors.mutedFg, marginTop: 4 },
+  retryBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    backgroundColor: colors.primary,
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+  },
+  retryBtnText: { color: colors.primaryFg, fontWeight: "800", letterSpacing: 1, fontSize: 11 },
+  retryBtnGhost: {
+    borderWidth: 1,
+    borderColor: colors.primary,
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+  },
+  retryBtnGhostText: { color: colors.primary, fontWeight: "700", letterSpacing: 1, fontSize: 11 },
 });
