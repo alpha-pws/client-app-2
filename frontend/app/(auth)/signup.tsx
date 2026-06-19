@@ -131,8 +131,8 @@ export default function Signup() {
               </Text>
             )}
             {tooYoung && (
-              <Text style={[styles.helperText, { color: colors.accent }]}>
-                You must be at least {MIN_AGE} to use Closet AI.
+              <Text style={[styles.helperText, { color: colors.accent }]} testID="signup-age-display">
+                You are {age} years old. You must be at least {MIN_AGE} to use Closet AI.
               </Text>
             )}
 
