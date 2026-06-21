@@ -194,7 +194,84 @@ test_plan:
 agent_communication:
     - agent: "main"
       message: |
-        Phase 2 of the Big Audit is complete. Massive batch shipped:
+        Phase 3 — Final batch shipped. Closes the remaining audit items:
+
+        1. **AI Search / Stylist redesign** (`/app/frontend/app/(tabs)/outfits.tsx`)
+           - Sticky search bar at TOP (Instagram/ChatGPT style) with search icon + clear-X + circular send button.
+           - "Done" keyboard-dismiss bar appears when keyboard is visible (testID `dismiss-keyboard`).
+           - Pressable wrapping the messages area dismisses keyboard on outside tap; `keyboardDismissMode="on-drag"` on the message list/empty state allows swipe-down to dismiss.
+           - Recent searches persisted in AsyncStorage (key `@closetai/stylist_recent_v1`, max 8), shown as chips with a "Clear" link.
+           - Trending searches: 8 curated suggestions (Wedding guest outfit, Rainy day commute, Beach vacation pack, Office to dinner, Weekend brunch, Gym to coffee, Festival fit, Job interview).
+           - Removed the old hero image + manual weather/occasion inputs (auto-weather pill remains).
+           - `onSubmitEditing={send}` so pressing Enter sends.
+
+        2. **Wheel pickers** (`/app/frontend/app/onboarding.tsx`)
+           - Chest (70–140 cm), Waist (55–130 cm), Hips (70–140 cm), Shoe size (US 3–14 in 0.5 increments) now all use the `WheelPicker` component (Phase 2). Height/Weight already converted.
+
+        3. **Chat from Friends sub-tab** (`/app/frontend/app/(tabs)/social.tsx`)
+           - Each friend row now has a chat icon button (testID `friend-chat-<friendshipId>`) that deep-links to `/social/chat/{friend_user_id}?name=…` without going through the Messages tab.
+
+        Test plan:
+        - **Stylist tab**: tap `bottom-tab-outfits`. Verify `stylist-sticky-search` testID exists with `chat-input` inside. Type "office outfit", hit send. Verify a `recent-chip-office out` chip appears in the empty state after returning. Verify `TRENDING NOW` label and 8 trending chips render. `dismiss-keyboard` testID should appear only when keyboard is visible (best-effort on web).
+        - **Onboarding pickers**: navigate to `/profile-edit?mode=edit&step=body`. Verify testIDs `onboard-chest`, `onboard-waist`, `onboard-hips`, `onboard-shoe` all render as wheel pickers (not TextInput).
+        - **Friend chat shortcut**: Social tab → Friends sub-tab → verify each friend row has a `friend-chat-<id>` button; tapping navigates to chat with the right friend name in the header.
+
+        Backend untouched — no re-test needed.
+
+test_plan:
+  current_focus:
+    - "Stylist sticky-search redesign with recent/trending chips"
+    - "Wheel pickers on remaining body fields (chest/waist/hips/shoe)"
+    - "Direct chat icon on Friends sub-tab"
+  stuck_tasks: []
+  test_all: false
+  test_priority: "high_first"
+
+frontend:
+  - task: "Stylist sticky-search redesign with recent/trending chips"
+    implemented: true
+    working: true
+    file: "/app/frontend/app/(tabs)/outfits.tsx"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+        - working: "NA"
+          agent: "main"
+          comment: "Sticky search bar at top; recent searches in AsyncStorage; 8 trending chips; keyboard dismiss bar; tap-outside + swipe-down to dismiss; onSubmitEditing wired."
+        - working: true
+          agent: "testing"
+          comment: "PASS (iteration_8). stylist-sticky-search at TOP with chat-input + circular chat-send. auto-weather-pill (21°C·clear). All 9 preset chips found. Empty state shows TRENDING NOW label + all 8 trending-chip-* (Wedding gues / Rainy day co / Beach vacati / Office to di / Weekend brun / Gym to coffe / Festival fit / Job intervie - sliced to 12 chars). chat-clear (X) clears input. Sending 'office outfit' produces 'The Look' board card (POST /api/outfit/chat 200). After full page reload + tap Stylist, RECENT block with recent-chip-office outfi + clear-recent rendered (AsyncStorage persisted). Note: messages persist in component state across tab switches; only a hard reload empties state and surfaces the recent block — main agent may want to add a 'New chat' affordance."
+
+  - task: "Wheel pickers on remaining body fields"
+    implemented: true
+    working: true
+    file: "/app/frontend/app/onboarding.tsx"
+    stuck_count: 0
+    priority: "medium"
+    needs_retesting: false
+    status_history:
+        - working: "NA"
+          agent: "main"
+          comment: "Chest/Waist/Hips/Shoe-size now use WheelPicker component."
+        - working: true
+          agent: "testing"
+          comment: "PASS (iteration_8). At /profile-edit?mode=edit&step=body all six testIDs render: onboard-height, onboard-weight, onboard-shoe, onboard-chest, onboard-waist, onboard-hips. All are DIV (ScrollView) — none are INPUT/TEXTAREA. Visual centered highlighted band confirmed in screenshot."
+
+  - task: "Direct chat icon on Friends sub-tab"
+    implemented: true
+    working: true
+    file: "/app/frontend/app/(tabs)/social.tsx"
+    stuck_count: 0
+    priority: "medium"
+    needs_retesting: false
+    status_history:
+        - working: "NA"
+          agent: "main"
+          comment: "Each friend row exposes friend-chat-<id> button that deep-links to /social/chat/{friend_user_id}."
+        - working: true
+          agent: "testing"
+          comment: "PASS (iteration_8). Friends sub-tab shows Alice row with friend-chat-0053b8bc-... icon button. Tap navigates to /social/chat/ccd49786-...?name=Alice. Chat header reads 'Alice' (not 'Chat'). Empty state reads 'Start the conversation with Alice.'"
 
         BACKEND (already verified running, indexes ensured on startup):
         1. **Username system** — new `username` field on users, unique sparse index, auto-generated on signup (slugified name + dedupe), backfilled for legacy users at startup, PATCH /users/username endpoint.

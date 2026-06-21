@@ -303,6 +303,20 @@ export default function Social() {
                     <Text style={styles.friendName}>{f.friend_name}</Text>
                     <Text style={styles.friendEmail}>{f.friend_email}</Text>
                   </View>
+                  <TouchableOpacity
+                    testID={`friend-chat-${f.id}`}
+                    onPress={(e) => {
+                      e.stopPropagation();
+                      router.push({
+                        pathname: "/social/chat/[friendId]",
+                        params: { friendId: f.friend_user_id, name: f.friend_name },
+                      });
+                    }}
+                    hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                    style={styles.chatIconBtn}
+                  >
+                    <Ionicons name="chatbubble-ellipses" size={18} color={colors.primary} />
+                  </TouchableOpacity>
                   <View style={styles.accessTag}>
                     <Text style={styles.accessTagText}>{f.access_level}</Text>
                   </View>
@@ -525,6 +539,15 @@ const styles = StyleSheet.create({
     letterSpacing: 1,
   },
   accessTag: { borderWidth: 1, borderColor: colors.primary, paddingHorizontal: 8, paddingVertical: 4 },
+  chatIconBtn: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    backgroundColor: colors.muted,
+    alignItems: "center",
+    justifyContent: "center",
+    marginRight: 8,
+  },
   accessTagText: {
     fontSize: 9,
     fontWeight: "700",

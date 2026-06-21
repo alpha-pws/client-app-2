@@ -266,57 +266,42 @@ export default function Onboarding() {
                 </View>
               </Field>
               <Field label="Shoe size">
-                <TextInput
+                <WheelPicker
                   testID="onboard-shoe"
-                  value={shoeSize}
-                  onChangeText={setShoeSize}
-                  style={styles.input}
-                  placeholder="EU 42 / US 9"
-                  placeholderTextColor={colors.subtle}
+                  items={SHOE_SIZES}
+                  value={shoeSize || "US 9"}
+                  onChange={setShoeSize}
+                  height={140}
                 />
               </Field>
               <Text style={styles.subHeader}>Advanced (optional)</Text>
-              <View style={styles.row}>
-                <View style={{ flex: 1 }}>
-                  <Field label="Chest cm">
-                    <TextInput
-                      testID="onboard-chest"
-                      value={chest}
-                      onChangeText={setChest}
-                      keyboardType="numeric"
-                      style={styles.input}
-                      placeholder="—"
-                      placeholderTextColor={colors.subtle}
-                    />
-                  </Field>
-                </View>
-                <View style={{ flex: 1 }}>
-                  <Field label="Waist cm">
-                    <TextInput
-                      testID="onboard-waist"
-                      value={waist}
-                      onChangeText={setWaist}
-                      keyboardType="numeric"
-                      style={styles.input}
-                      placeholder="—"
-                      placeholderTextColor={colors.subtle}
-                    />
-                  </Field>
-                </View>
-                <View style={{ flex: 1 }}>
-                  <Field label="Hips cm">
-                    <TextInput
-                      testID="onboard-hips"
-                      value={hips}
-                      onChangeText={setHips}
-                      keyboardType="numeric"
-                      style={styles.input}
-                      placeholder="—"
-                      placeholderTextColor={colors.subtle}
-                    />
-                  </Field>
-                </View>
-              </View>
+              <Field label="Chest">
+                <WheelPicker
+                  testID="onboard-chest"
+                  items={CHEST_OPTS}
+                  value={chest ? `${chest} cm` : "95 cm"}
+                  onChange={(v) => setChest(v.replace(/[^0-9]/g, ""))}
+                  height={140}
+                />
+              </Field>
+              <Field label="Waist">
+                <WheelPicker
+                  testID="onboard-waist"
+                  items={WAIST_OPTS}
+                  value={waist ? `${waist} cm` : "80 cm"}
+                  onChange={(v) => setWaist(v.replace(/[^0-9]/g, ""))}
+                  height={140}
+                />
+              </Field>
+              <Field label="Hips">
+                <WheelPicker
+                  testID="onboard-hips"
+                  items={HIPS_OPTS}
+                  value={hips ? `${hips} cm` : "95 cm"}
+                  onChange={(v) => setHips(v.replace(/[^0-9]/g, ""))}
+                  height={140}
+                />
+              </Field>
               <Primary onPress={next} label="Continue" testID="onboard-body-continue" />
               <Ghost onPress={next} label="Skip this" testID="onboard-body-skip" />
             </View>

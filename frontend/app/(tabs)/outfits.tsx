@@ -3,8 +3,10 @@ import {
   ActivityIndicator,
   FlatList,
   Image,
+  Keyboard,
   KeyboardAvoidingView,
   Platform,
+  Pressable,
   ScrollView,
   StyleSheet,
   Text,
@@ -13,11 +15,25 @@ import {
   View,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
+import AsyncStorage from "@react-native-async-storage/async-storage";
 import { Ionicons } from "@expo/vector-icons";
 import { api, WardrobeItem, Weather } from "@/src/api";
 import { getCurrentCoords } from "@/src/location";
-import { useAuth } from "@/src/useAuth";
 import { colors, radii, shadows, spacing, typography } from "@/src/theme";
+
+const RECENT_KEY = "@closetai/stylist_recent_v1";
+const MAX_RECENT = 8;
+
+const TRENDING: { text: string; icon: keyof typeof import("@expo/vector-icons/build/Ionicons").default.glyphMap }[] = [
+  { text: "Wedding guest outfit", icon: "rose-outline" },
+  { text: "Rainy day commute", icon: "rainy-outline" },
+  { text: "Beach vacation pack", icon: "sunny-outline" },
+  { text: "Office to dinner", icon: "wine-outline" },
+  { text: "Weekend brunch", icon: "cafe-outline" },
+  { text: "Gym to coffee", icon: "barbell-outline" },
+  { text: "Festival fit", icon: "musical-notes-outline" },
+  { text: "Job interview", icon: "briefcase-outline" },
+];
 
 type ChatMsg = {
   id: string;
@@ -26,21 +42,61 @@ type ChatMsg = {
   recommended_item_ids?: string[];
 };
 
-const STYLIST_HERO =
-  "https://images.unsplash.com/photo-1634921276069-c24ba5d6b35c?crop=entropy&cs=srgb&fm=jpg&w=900&q=80";
-
 export default function Outfits() {
-  const { user } = useAuth();
   const [messages, setMessages] = useState<ChatMsg[]>([]);
   const [input, setInput] = useState("");
-  const [weather, setWeather] = useState("");
-  const [occasion, setOccasion] = useState("");
   const [loading, setLoading] = useState(false);
   const [session, setSession] = useState<string | undefined>(undefined);
   const [wardrobeMap, setWardrobeMap] = useState<Record<string, WardrobeItem>>({});
   const [autoWeather, setAutoWeather] = useState<Weather | null>(null);
   const [coords, setCoords] = useState<{ lat: number; lon: number } | null>(null);
+  const [recent, setRecent] = useState<string[]>([]);
+  const [kbVisible, setKbVisible] = useState(false);
   const listRef = useRef<FlatList<ChatMsg>>(null);
+  const inputRef = useRef<TextInput>(null);
+
+  // Load recent searches from disk on mount.
+  useEffect(() => {
+    AsyncStorage.getItem(RECENT_KEY)
+      .then((raw) => {
+        if (raw) {
+          try {
+            const arr = JSON.parse(raw) as string[];
+            if (Array.isArray(arr)) setRecent(arr.filter((x) => typeof x === "string").slice(0, MAX_RECENT));
+          } catch {}
+        }
+      })
+      .catch(() => {});
+  }, []);
+
+  // Keyboard visibility tracking so we can render a dedicated dismiss bar.
+  useEffect(() => {
+    const showSub = Keyboard.addListener(Platform.OS === "ios" ? "keyboardWillShow" : "keyboardDidShow", () =>
+      setKbVisible(true),
+    );
+    const hideSub = Keyboard.addListener(Platform.OS === "ios" ? "keyboardWillHide" : "keyboardDidHide", () =>
+      setKbVisible(false),
+    );
+    return () => {
+      showSub.remove();
+      hideSub.remove();
+    };
+  }, []);
+
+  const pushRecent = useCallback(async (text: string) => {
+    const cleaned = text.trim();
+    if (!cleaned || cleaned.length < 2) return;
+    setRecent((prev) => {
+      const next = [cleaned, ...prev.filter((x) => x.toLowerCase() !== cleaned.toLowerCase())].slice(0, MAX_RECENT);
+      AsyncStorage.setItem(RECENT_KEY, JSON.stringify(next)).catch(() => {});
+      return next;
+    });
+  }, []);
+
+  const clearRecent = useCallback(async () => {
+    setRecent([]);
+    await AsyncStorage.removeItem(RECENT_KEY).catch(() => {});
+  }, []);
 
   const loadWardrobe = useCallback(async () => {
     try {
@@ -79,6 +135,9 @@ export default function Outfits() {
   const send = async (preset?: string) => {
     const msgText = (preset ?? input).trim();
     if (!msgText || loading) return;
+    // Only persist user-typed prompts (not preset chips).
+    if (!preset) pushRecent(msgText);
+    Keyboard.dismiss();
     const userMsg: ChatMsg = { id: `u-${Date.now()}`, role: "user", text: msgText };
     setMessages((prev) => [...prev, userMsg]);
     setInput("");
@@ -87,8 +146,6 @@ export default function Outfits() {
       const res = await api.outfitChat({
         message: msgText,
         session_id: session,
-        weather: weather || undefined,
-        occasion: occasion || undefined,
         lat: coords?.lat,
         lon: coords?.lon,
       });
@@ -212,18 +269,66 @@ export default function Outfits() {
     );
   };
 
-  const quickPrompts = [
-    { text: "What should I wear today?", icon: "sunny-outline" as const },
-    { text: "A brunch outfit", icon: "cafe-outline" as const },
-    { text: "First-date look", icon: "wine-outline" as const },
-    { text: "Workout fit", icon: "barbell-outline" as const },
-  ];
-
   return (
     <SafeAreaView style={styles.safe} edges={["top"]} testID="outfits-screen">
       <View style={styles.header}>
         <Text style={styles.kicker}>YOUR STYLIST</Text>
         <Text style={styles.heroTitle}>Style me.</Text>
+      </View>
+
+      {/* Sticky search bar (always at top, like Instagram/Amazon/ChatGPT) */}
+      <View style={styles.stickySearch} testID="stylist-sticky-search">
+        <View style={styles.searchBarWrap}>
+          <Ionicons name="search" size={16} color={colors.subtle} />
+          <TextInput
+            ref={inputRef}
+            testID="chat-input"
+            value={input}
+            onChangeText={setInput}
+            placeholder="Ask your stylist anything…"
+            placeholderTextColor={colors.subtle}
+            style={styles.searchBarInput}
+            returnKeyType="send"
+            onSubmitEditing={() => send()}
+            blurOnSubmit
+          />
+          {!!input && (
+            <TouchableOpacity
+              testID="chat-clear"
+              onPress={() => setInput("")}
+              hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
+            >
+              <Ionicons name="close-circle" size={18} color={colors.subtle} />
+            </TouchableOpacity>
+          )}
+          <TouchableOpacity
+            testID="chat-send"
+            style={[styles.sendBtn, (loading || !input.trim()) && { opacity: 0.4 }]}
+            onPress={() => send()}
+            disabled={loading || !input.trim()}
+          >
+            {loading ? (
+              <ActivityIndicator color={colors.primaryFg} size="small" />
+            ) : (
+              <Ionicons name="arrow-up" size={18} color={colors.primaryFg} />
+            )}
+          </TouchableOpacity>
+        </View>
+
+        {/* Keyboard-dismiss bar */}
+        {kbVisible && (
+          <View style={styles.kbDismissBar}>
+            <TouchableOpacity
+              testID="dismiss-keyboard"
+              onPress={Keyboard.dismiss}
+              style={styles.kbDismissBtn}
+              hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
+            >
+              <Ionicons name="chevron-down" size={14} color={colors.primary} />
+              <Text style={styles.kbDismissText}>Done</Text>
+            </TouchableOpacity>
+          </View>
+        )}
       </View>
 
       {/* Live weather pill */}
@@ -268,108 +373,80 @@ export default function Outfits() {
         ))}
       </ScrollView>
 
-      {/* Context inputs */}
-      <View style={styles.contextRow}>
-        <View style={styles.contextInputWrap}>
-          <Ionicons name="cloud-outline" size={14} color={colors.textSoft} />
-          <TextInput
-            testID="weather-input"
-            value={weather}
-            onChangeText={setWeather}
-            placeholder="Weather"
-            placeholderTextColor={colors.subtle}
-            style={styles.contextInput}
-          />
-        </View>
-        <View style={styles.contextInputWrap}>
-          <Ionicons name="calendar-outline" size={14} color={colors.textSoft} />
-          <TextInput
-            testID="occasion-input"
-            value={occasion}
-            onChangeText={setOccasion}
-            placeholder="Occasion"
-            placeholderTextColor={colors.subtle}
-            style={styles.contextInput}
-          />
-        </View>
-      </View>
-
-      <KeyboardAvoidingView
+      <Pressable
         style={{ flex: 1 }}
-        behavior={Platform.OS === "ios" ? "padding" : undefined}
-        keyboardVerticalOffset={120}
+        onPress={Keyboard.dismiss}
+        accessible={false}
       >
-        {messages.length === 0 ? (
-          <ScrollView
-            contentContainerStyle={styles.emptyWrap}
-            keyboardShouldPersistTaps="handled"
-            testID="outfits-empty"
-          >
-            <View style={styles.emptyHeroCard}>
-              <Image source={{ uri: STYLIST_HERO }} style={styles.emptyHeroImg} />
-              <View style={styles.emptyHeroVeil} />
-              <View style={styles.emptyHeroText}>
-                <Text style={styles.emptyHeroKicker}>HELLO {((user?.name || "").split(" ")[0] || "").toUpperCase()}</Text>
-                <Text style={styles.emptyHeroTitle}>What&apos;s on the agenda?</Text>
-                <Text style={styles.emptyHeroSub}>
-                  Tell me the weather + the vibe. I&apos;ll pull from your closet.
-                </Text>
-              </View>
-            </View>
-
-            <Text style={styles.suggestionsLabel}>QUICK PROMPTS</Text>
-            <View style={styles.suggestionsGrid}>
-              {quickPrompts.map((p) => (
-                <TouchableOpacity
-                  key={p.text}
-                  testID={`quick-prompt-${p.text.slice(0, 8)}`}
-                  style={styles.suggestionCard}
-                  onPress={() => send(p.text)}
-                  activeOpacity={0.9}
-                >
-                  <View style={styles.suggestionIconWrap}>
-                    <Ionicons name={p.icon} size={20} color={colors.primary} />
+        <KeyboardAvoidingView
+          style={{ flex: 1 }}
+          behavior={Platform.OS === "ios" ? "padding" : undefined}
+          keyboardVerticalOffset={120}
+        >
+          {messages.length === 0 ? (
+            <ScrollView
+              contentContainerStyle={styles.emptyWrap}
+              keyboardShouldPersistTaps="handled"
+              keyboardDismissMode="on-drag"
+              testID="outfits-empty"
+            >
+              {/* Recent */}
+              {recent.length > 0 && (
+                <View style={{ marginBottom: spacing.lg }} testID="recent-searches">
+                  <View style={styles.chipsHeaderRow}>
+                    <Text style={styles.suggestionsLabel}>RECENT</Text>
+                    <TouchableOpacity testID="clear-recent" onPress={clearRecent} hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}>
+                      <Text style={styles.clearLink}>Clear</Text>
+                    </TouchableOpacity>
                   </View>
-                  <Text style={styles.suggestionText}>{p.text}</Text>
-                </TouchableOpacity>
-              ))}
-            </View>
-          </ScrollView>
-        ) : (
-          <FlatList
-            ref={listRef}
-            data={messages}
-            keyExtractor={(m) => m.id}
-            renderItem={renderItem}
-            contentContainerStyle={styles.chatList}
-            onContentSizeChange={() => listRef.current?.scrollToEnd({ animated: true })}
-          />
-        )}
+                  <View style={styles.chipsWrap}>
+                    {recent.map((r) => (
+                      <TouchableOpacity
+                        key={r}
+                        testID={`recent-chip-${r.slice(0, 12)}`}
+                        style={styles.softChip}
+                        onPress={() => send(r)}
+                      >
+                        <Ionicons name="time-outline" size={12} color={colors.text} />
+                        <Text style={styles.softChipText} numberOfLines={1}>
+                          {r}
+                        </Text>
+                      </TouchableOpacity>
+                    ))}
+                  </View>
+                </View>
+              )}
 
-        <View style={styles.inputBar}>
-          <TextInput
-            testID="chat-input"
-            value={input}
-            onChangeText={setInput}
-            placeholder="Describe your day…"
-            placeholderTextColor={colors.subtle}
-            style={styles.chatInput}
-            multiline
-          />
-          <TouchableOpacity
-            testID="chat-send"
-            style={[styles.sendBtn, (loading || !input.trim()) && { opacity: 0.45 }]}
-            onPress={() => send()}
-            disabled={loading || !input.trim()}
-          >
-            {loading ? (
-              <ActivityIndicator color={colors.primaryFg} />
-            ) : (
-              <Ionicons name="arrow-up" size={20} color={colors.primaryFg} />
-            )}
-          </TouchableOpacity>
-        </View>
-      </KeyboardAvoidingView>
+              {/* Trending */}
+              <Text style={styles.suggestionsLabel}>TRENDING NOW</Text>
+              <View style={styles.chipsWrap}>
+                {TRENDING.map((t) => (
+                  <TouchableOpacity
+                    key={t.text}
+                    testID={`trending-chip-${t.text.slice(0, 12)}`}
+                    style={styles.softChip}
+                    onPress={() => send(t.text)}
+                  >
+                    <Ionicons name={t.icon} size={12} color={colors.text} />
+                    <Text style={styles.softChipText}>{t.text}</Text>
+                  </TouchableOpacity>
+                ))}
+              </View>
+            </ScrollView>
+          ) : (
+            <FlatList
+              ref={listRef}
+              data={messages}
+              keyExtractor={(m) => m.id}
+              renderItem={renderItem}
+              contentContainerStyle={styles.chatList}
+              keyboardDismissMode="on-drag"
+              keyboardShouldPersistTaps="handled"
+              onContentSizeChange={() => listRef.current?.scrollToEnd({ animated: true })}
+            />
+          )}
+        </KeyboardAvoidingView>
+      </Pressable>
     </SafeAreaView>
   );
 }
@@ -379,22 +456,83 @@ const styles = StyleSheet.create({
   header: { paddingHorizontal: 20, paddingTop: spacing.lg, paddingBottom: spacing.sm },
   kicker: { ...typography.label, color: colors.primary },
   heroTitle: { ...typography.display, marginTop: 8 },
+
+  stickySearch: {
+    paddingHorizontal: 20,
+    paddingBottom: spacing.sm,
+    backgroundColor: colors.background,
+    borderBottomWidth: 1,
+    borderBottomColor: colors.border,
+  },
+  searchBarWrap: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    paddingHorizontal: 14,
+    paddingVertical: 6,
+    backgroundColor: colors.surface,
+    borderRadius: radii.pill,
+    borderWidth: 1,
+    borderColor: colors.border,
+  },
+  searchBarInput: {
+    flex: 1,
+    fontSize: 15,
+    color: colors.text,
+    paddingVertical: 10,
+  },
+  kbDismissBar: {
+    flexDirection: "row",
+    justifyContent: "flex-end",
+    paddingTop: 6,
+  },
+  kbDismissBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 4,
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+  },
+  kbDismissText: { fontSize: 12, fontWeight: "700", color: colors.primary },
+
+  chipsHeaderRow: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    marginBottom: spacing.sm,
+  },
+  clearLink: { fontSize: 11, fontWeight: "700", color: colors.subtle, letterSpacing: 0.6 },
+  chipsWrap: { flexDirection: "row", flexWrap: "wrap", gap: 8 },
+  softChip: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    backgroundColor: colors.surfaceSoft,
+    borderRadius: radii.pill,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderWidth: 1,
+    borderColor: colors.border,
+    maxWidth: 220,
+  },
+  softChipText: { fontSize: 12, fontWeight: "600", color: colors.text },
+
   weatherPill: {
     flexDirection: "row",
     alignItems: "center",
     gap: 6,
     alignSelf: "flex-start",
     marginHorizontal: 20,
+    marginTop: spacing.sm,
     paddingHorizontal: 12,
     paddingVertical: 6,
     borderRadius: radii.pill,
     backgroundColor: colors.surfaceSoft,
     borderWidth: 1,
     borderColor: colors.border,
-    marginBottom: spacing.sm,
   },
   weatherPillText: { fontSize: 12, fontWeight: "600", color: colors.text },
-  genRowWrap: { maxHeight: 52, flexGrow: 0 },
+  genRowWrap: { maxHeight: 60, flexGrow: 0, marginTop: spacing.sm },
   genRow: { paddingHorizontal: 20, gap: 8, alignItems: "center", height: 52 },
   genChip: {
     flexDirection: "row",
@@ -410,72 +548,8 @@ const styles = StyleSheet.create({
   },
   genChipText: { fontSize: 12, fontWeight: "700", color: colors.text },
 
-  contextRow: { flexDirection: "row", gap: 10, paddingHorizontal: 20, marginTop: spacing.md, marginBottom: spacing.sm },
-  contextInputWrap: {
-    flex: 1,
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 8,
-    backgroundColor: colors.surface,
-    borderRadius: radii.pill,
-    borderWidth: 1,
-    borderColor: colors.border,
-    paddingHorizontal: 14,
-    paddingVertical: 10,
-  },
-  contextInput: { flex: 1, fontSize: 13, color: colors.text, paddingVertical: 0 },
-
   emptyWrap: { padding: 20, paddingBottom: 40 },
-  emptyHeroCard: {
-    borderRadius: radii.xl,
-    overflow: "hidden",
-    height: 240,
-    ...shadows.soft,
-  },
-  emptyHeroImg: { width: "100%", height: "100%" },
-  emptyHeroVeil: {
-    ...StyleSheet.absoluteFillObject,
-    backgroundColor: "rgba(26, 26, 26, 0.35)",
-  },
-  emptyHeroText: { position: "absolute", left: 20, right: 20, bottom: 20 },
-  emptyHeroKicker: {
-    fontSize: 10,
-    fontWeight: "700",
-    letterSpacing: 2,
-    color: "#fff",
-    opacity: 0.85,
-  },
-  emptyHeroTitle: {
-    fontFamily: typography.hero.fontFamily,
-    fontSize: 32,
-    fontWeight: "700",
-    color: "#fff",
-    marginTop: 8,
-    lineHeight: 34,
-  },
-  emptyHeroSub: { fontSize: 13, color: "#fff", opacity: 0.85, marginTop: 6 },
-
-  suggestionsLabel: { ...typography.label, marginTop: spacing.xl, marginBottom: spacing.md },
-  suggestionsGrid: { flexDirection: "row", flexWrap: "wrap", gap: 10 },
-  suggestionCard: {
-    flexBasis: "48%",
-    backgroundColor: colors.surface,
-    borderRadius: radii.lg,
-    padding: 14,
-    borderWidth: 1,
-    borderColor: colors.border,
-    ...shadows.soft,
-  },
-  suggestionIconWrap: {
-    width: 38,
-    height: 38,
-    borderRadius: 19,
-    backgroundColor: colors.surfaceSoft,
-    alignItems: "center",
-    justifyContent: "center",
-    marginBottom: 10,
-  },
-  suggestionText: { fontSize: 13, fontWeight: "600", color: colors.text },
+  suggestionsLabel: { ...typography.label, marginTop: spacing.lg, marginBottom: spacing.md },
 
   chatList: { padding: 20, paddingBottom: 100 },
 
@@ -537,34 +611,12 @@ const styles = StyleSheet.create({
   itemPillDot: { width: 6, height: 6, borderRadius: 3, backgroundColor: colors.primary },
   itemPillText: { fontSize: 11, fontWeight: "600", color: colors.text, maxWidth: 140 },
 
-  inputBar: {
-    flexDirection: "row",
-    alignItems: "flex-end",
-    gap: 8,
-    paddingHorizontal: 16,
-    paddingVertical: 12,
-    backgroundColor: colors.background,
-  },
-  chatInput: {
-    flex: 1,
-    fontSize: 15,
-    color: colors.text,
-    paddingHorizontal: 16,
-    paddingTop: 12,
-    paddingBottom: 12,
-    backgroundColor: colors.surface,
-    borderRadius: 22,
-    borderWidth: 1,
-    borderColor: colors.border,
-    maxHeight: 120,
-  },
   sendBtn: {
-    width: 44,
-    height: 44,
-    borderRadius: 22,
+    width: 36,
+    height: 36,
+    borderRadius: 18,
     backgroundColor: colors.primary,
     alignItems: "center",
     justifyContent: "center",
-    ...shadows.soft,
   },
 });
