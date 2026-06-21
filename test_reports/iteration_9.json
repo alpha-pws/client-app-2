@@ -1,0 +1,51 @@
+{
+  "summary": "Global Currency Conversion feature tested end-to-end. Backend rates endpoint, profile persistence, and currency picker UI all WORK. Found and FIXED a critical regression introduced by this feature: GET /api/profile returned 500 for all pre-existing users because the new non-optional `currency: str = \"USD\"` field on StyleProfile rejected None values pulled from legacy Mongo docs (doc.get(\"currency\") returns None → pydantic ValidationError). Patched get_profile/update_profile to skip None values so model defaults apply. After fix: 6/6 backend tests pass, 6/7 frontend checks pass; one minor UX issue — wishlist-currency-pill does not refresh immediately after currency change (only after page reload), even though formatPrice already returns new symbol.",
+  "backend_issues": {
+    "critical": [
+      {
+        "endpoint": "GET /api/profile",
+        "issue": "FIXED by testing agent. StyleProfile.currency: str = \"USD\" is non-optional. Legacy profile docs in Mongo have no `currency` key, so `{k: doc.get(k) for k in StyleProfile.model_fields.keys()}` passes `currency=None` to pydantic → ValidationError → 500. Changed dict comprehension to skip None values so default kicks in. Reproduced in backend.err.log at server.py:1544 before fix.",
+        "priority": "CRITICAL"
+      }
+    ],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [
+      {
+        "component": "Wishlist tab — wishlist-currency-pill",
+        "issue": "After changing currency to INR via Profile→Account→modal, navigating back to bottom-tab-wishlist immediately shows the pill text still as 'Prices in USD' even though formatPrice has already switched (body contains ₹ instead of $). The pill text correctly reads 'Prices in INR' ONLY after a hard page reload. Suggests the pill reads currency code from a stale source instead of the useCurrency() hook that powers formatPrice. Recommend wiring the pill text to the same hook state.",
+        "testID": "wishlist-currency-pill",
+        "priority": "medium"
+      }
+    ],
+    "integration_issues": [],
+    "design_issues": [],
+    "react_native_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_currency.py",
+    "/app/test_reports/pytest/pytest_currency.xml"
+  ],
+  "action_items": [
+    "Review the get_profile / update_profile patch at server.py:1541-1556 (skip-None comprehension) and keep it; it also protects future optional/defaulted fields from the same regression class.",
+    "Fix wishlist-currency-pill to react to live currency changes (likely re-read from useCurrency() hook instead of a one-shot profile snapshot, or add useFocusEffect refresh on the Wishlist screen).",
+    "Optionally seed a wishlist item in the test user account so future runs can verify target_price → INR formatting end-to-end (current test user has empty wishlist)."
+  ],
+  "critical_code_review_comments": [
+    "Any new non-Optional field added to StyleProfile must also be backfilled at startup (similar to legacy username backfill) OR loaded with None-skipping comprehension. The bug fix above covers any future occurrence."
+  ],
+  "updated_files": [
+    "/app/backend/server.py (get_profile + update_profile None-safe construction)",
+    "/app/backend/tests/test_currency.py (new pytest suite for /api/currency/rates and profile currency)"
+  ],
+  "success_rate": {
+    "backend": "100% (6/6 after fix)",
+    "frontend": "~85% — 6/7 checks pass; wishlist pill refresh lag is the only miss"
+  },
+  "seed_data_creation": "None. Test user (test@closetai.com) was switched to INR during tests then reset to USD via PATCH /api/profile.",
+  "retest_needed": true,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Backend pytest suite at /app/backend/tests/test_currency.py covers the rates endpoint + profile currency persistence with cleanup. Re-run with `pytest backend/tests/test_currency.py -v`. For the wishlist-pill refresh issue, after main agent fixes, verify: (1) login, (2) navigate bottom-tab-profile → Account, (3) tap currency-setting-row, search 'indian', pick INR, (4) navigate bottom-tab-wishlist, (5) wishlist-currency-pill SHOULD now immediately read 'Prices in INR' WITHOUT a reload.",
+  "rca_of_issue": "Profile 500 RCA: `StyleProfile.currency: str = \"USD\"` defaults only apply when key is missing from kwargs. Code passed `currency=None` via dict comprehension `doc.get(k)`. Pydantic v2 rejects None for `str`. Fix = filter None before constructing the model so the default activates. Reproduction: login as test@closetai.com (no currency yet) → GET /api/profile → 500. Backend log: ValidationError at server.py:1544. Mitigation applied + verified with full pytest suite & live login flow now returning currency=USD."
+}

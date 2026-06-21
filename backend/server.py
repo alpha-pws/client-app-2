@@ -5,6 +5,7 @@ from starlette.middleware.cors import CORSMiddleware
 from motor.motor_asyncio import AsyncIOMotorClient
 import os
 import logging
+import time
 import bcrypt
 import jwt
 import uuid
@@ -940,6 +941,89 @@ async def update_friend_access(friendship_id: str, body: FriendAccessUpdate, use
     return _friendship_to_item(updated, user["id"], other)
 
 
+# ---- Currency rates (Frankfurter / ECB, no API key) ----
+
+CURRENCY_CACHE_TTL_SEC = 6 * 60 * 60  # 6 hours
+_currency_cache: dict[str, dict] = {}  # in-process L1 cache; falls back to mongo L2
+
+SUPPORTED_CURRENCIES = [
+    "USD", "EUR", "GBP", "JPY", "CNY", "INR", "AUD", "CAD", "CHF", "SEK",
+    "NZD", "MXN", "BRL", "ZAR", "SGD", "HKD", "KRW", "NOK", "DKK", "PLN",
+    "TRY", "AED", "SAR", "THB", "IDR", "MYR", "PHP", "ILS", "HUF", "CZK", "RON",
+]
+
+
+async def _fetch_currency_rates(base: str) -> dict:
+    """
+    Returns {"base": base, "date": "YYYY-MM-DD", "rates": {"EUR": 0.92, ...}, "source": "frankfurter|fallback"}
+    Cache hierarchy: in-process → mongo (24h) → live API. Always returns something usable.
+    """
+    base = (base or "USD").upper()
+    now_ts = int(time.time())
+
+    # L1 cache
+    cached = _currency_cache.get(base)
+    if cached and now_ts - cached.get("_fetched_at", 0) < CURRENCY_CACHE_TTL_SEC:
+        return cached
+
+    # L2 cache (mongo)
+    db_doc = await db.currency_rates.find_one({"base": base}, {"_id": 0})
+    if db_doc and now_ts - db_doc.get("_fetched_at", 0) < CURRENCY_CACHE_TTL_SEC:
+        _currency_cache[base] = db_doc
+        return db_doc
+
+    # L3: live
+    url = f"https://api.frankfurter.app/latest?from={base}"
+    try:
+        async with httpx.AsyncClient(timeout=8, follow_redirects=True) as client_h:
+            r = await client_h.get(url)
+            r.raise_for_status()
+            data = r.json()
+        rates = data.get("rates") or {}
+        rates[base] = 1.0  # self-rate, useful for clients
+        doc = {
+            "base": base,
+            "date": data.get("date", ""),
+            "rates": rates,
+            "source": "frankfurter",
+            "_fetched_at": now_ts,
+        }
+        # persist
+        await db.currency_rates.update_one({"base": base}, {"$set": doc}, upsert=True)
+        _currency_cache[base] = doc
+        return doc
+    except Exception as e:  # noqa: BLE001
+        logger.warning("currency.fetch failed for base=%s: %s", base, e)
+        # Fall back to whatever we have in db, even if stale.
+        if db_doc:
+            return db_doc
+        # last-resort static fallback (approximate, identity for base)
+        fallback_rates = {c: 1.0 for c in SUPPORTED_CURRENCIES}
+        return {
+            "base": base,
+            "date": "",
+            "rates": fallback_rates,
+            "source": "fallback",
+            "_fetched_at": now_ts,
+        }
+
+
+@api_router.get("/currency/rates")
+async def currency_rates(base: str = "USD"):
+    """Public: live FX rates with 6h server cache. No auth required."""
+    base = (base or "USD").upper()
+    if base not in SUPPORTED_CURRENCIES:
+        raise HTTPException(status_code=400, detail=f"Unsupported base currency. Try one of: {', '.join(SUPPORTED_CURRENCIES[:6])}…")
+    doc = await _fetch_currency_rates(base)
+    return {
+        "base": doc["base"],
+        "date": doc.get("date", ""),
+        "rates": doc.get("rates", {}),
+        "source": doc.get("source", "unknown"),
+        "supported": SUPPORTED_CURRENCIES,
+    }
+
+
 # ---- Friend Discovery v2 ----
 
 @api_router.get("/users/search")
@@ -1398,6 +1482,7 @@ class StyleProfileUpdate(BaseModel):
     home_lat: Optional[float] = None
     home_lon: Optional[float] = None
     home_label: Optional[str] = None
+    currency: Optional[str] = Field(default=None, min_length=3, max_length=3)
     onboarded: Optional[bool] = None
 
 
@@ -1428,6 +1513,7 @@ class StyleProfile(BaseModel):
     home_lat: Optional[float] = None
     home_lon: Optional[float] = None
     home_label: Optional[str] = None
+    currency: str = "USD"
     onboarded: bool = False
     created_at: str
     updated_at: str
@@ -1455,7 +1541,7 @@ async def _get_or_create_profile(user_id: str) -> dict:
 @api_router.get("/profile", response_model=StyleProfile)
 async def get_profile(user: dict = Depends(get_current_user)):
     doc = await _get_or_create_profile(user["id"])
-    return StyleProfile(**{k: doc.get(k) for k in StyleProfile.model_fields.keys()})
+    return StyleProfile(**{k: doc[k] for k in StyleProfile.model_fields.keys() if k in doc and doc[k] is not None})
 
 
 @api_router.patch("/profile", response_model=StyleProfile)
@@ -1467,7 +1553,7 @@ async def update_profile(body: StyleProfileUpdate, user: dict = Depends(get_curr
     await _get_or_create_profile(user["id"])
     await db.profiles.update_one({"user_id": user["id"]}, {"$set": update})
     doc = await db.profiles.find_one({"user_id": user["id"]}, {"_id": 0})
-    return StyleProfile(**{k: doc.get(k) for k in StyleProfile.model_fields.keys()})
+    return StyleProfile(**{k: doc[k] for k in StyleProfile.model_fields.keys() if k in doc and doc[k] is not None})
 
 
 # ---------------------------------------------------------------------------

@@ -162,6 +162,7 @@ export type StyleProfile = {
   home_lat?: number | null;
   home_lon?: number | null;
   home_label?: string | null;
+  currency?: string | null;
   onboarded: boolean;
   created_at: string;
   updated_at: string;
@@ -294,6 +295,16 @@ export const api = {
   // weather
   getWeather: (lat: number, lon: number) =>
     request<Weather>(`/weather?lat=${lat}&lon=${lon}`),
+
+  // currency (frankfurter / ECB; ~30 majors; 6h server cache + 24h client cache)
+  getCurrencyRates: (base: string = "USD") =>
+    request<{
+      base: string;
+      date: string;
+      rates: Record<string, number>;
+      source: string;
+      supported: string[];
+    }>(`/currency/rates?base=${encodeURIComponent(base)}`, { auth: false }),
 
   // outfit gen
   outfitGenerator: (body: { occasion: string; notes?: string; lat?: number; lon?: number }) =>

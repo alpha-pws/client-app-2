@@ -446,3 +446,31 @@ frontend:
       message: |
         iteration_7 — Phase 2 HOTFIX REGRESSION: ALL 5 areas PASS. (1) Profile tab loads cleanly, no RedBox / no ReferenceError after the orphan Wishlist Add Modal was deleted from /app/frontend/app/(tabs)/profile.tsx (grep for showAdd/wName/wDesc/wImage/addWish returns zero matches). (2) Default Brands sub-tab renders the brands list (Amazon Fashion, Myntra, Zara, H&M, ASOS, Nike, Uniqlo, Adidas, Shein, Nordstrom). (3) Account sub-tab renders avatar-dashboard testID without crash. (4) Social → Friends sub-tab label now correctly reads "ADD FRIEND BY @USERNAME OR EMAIL". (5) Chat header & empty-state hotfix verified by navigating directly to /social/chat/{friendId} with NO `name` query param — header shows "Alice" (resolved from api.listFriends() fallback) and empty-state reads "Start the conversation with Alice." Backend not re-tested per instructions (was 19/19 PASS in iteration_6). Profile crash regression is closed. Full report: /app/test_reports/iteration_7.json.
 
+    - agent: "testing"
+      message: |
+        iteration_9 — GLOBAL CURRENCY CONVERSION feature tested. CRITICAL BUG FOUND AND FIXED by testing agent:
+
+        🔴 GET /api/profile returned 500 for ALL pre-existing users (including test@closetai.com) because the new field `StyleProfile.currency: str = "USD"` is non-optional, but legacy profile docs in Mongo have no `currency` key, so `{k: doc.get(k) for k in StyleProfile.model_fields.keys()}` passed `currency=None` → pydantic ValidationError → 500. Stack trace at server.py:1544 confirmed in backend.err.log. Fix applied: switched dict comprehensions in get_profile and update_profile (server.py:1541-1556) to skip None values so model defaults activate. After fix, login flow + profile load work.
+
+        ✅ Backend tests (6/6 PASS) in new /app/backend/tests/test_currency.py:
+          - GET /api/currency/rates (USD default) → 200, source="frankfurter", EUR in 0.5–2.0, ≥30 supported codes, date=YYYY-MM-DD.
+          - GET /api/currency/rates?base=EUR → 200, USD reciprocal within 5% of USD→EUR.
+          - GET /api/currency/rates?base=ZZZ → 400 "Unsupported base currency".
+          - PATCH /api/profile {"currency":"INR"} → 200 and persists via subsequent GET.
+          - PATCH /api/profile {"currency":"X"} → 422 (min_length=3).
+          - Cleanup: reset test user to USD.
+
+        ✅ Frontend (6/7 PASS):
+          - T3 wishlist-currency-pill initial reads "Prices in USD" ✓
+          - T4 currency-setting-row in Profile→Account shows "Display currency / US Dollar · $ USD · ECB 2026-06-19" ✓
+          - T5 modal opens with currency-search-input + all currency-option-* (USD/EUR/INR…); typing "indian" filters down to INR only; tapping INR closes modal, row sub-label now reads "Indian Rupee · ₹ INR · ECB 2026-06-19" ✓
+          - T7 after `page.reload()` + re-login, wishlist-currency-pill correctly reads "Prices in INR" (persisted via server profile) ✓
+
+        ⚠️ T6 minor: Immediately after picking INR via modal and tapping bottom-tab-wishlist (no reload), the `wishlist-currency-pill` still reads "Prices in USD" even though formatPrice has already switched (page body contains ₹/INR characters, no $). Only after a hard reload does the pill text refresh to "Prices in INR". The pill text appears to read currency from a stale snapshot rather than the live useCurrency() hook that powers formatPrice. After reload it works perfectly. Recommend: wire pill text to the same hook state (or useFocusEffect refresh of profile on Wishlist screen).
+
+        🗒️ Wishlist of test user is empty so target_price conversion couldn't be verified end-to-end, but formatPrice is shared with the pill helper.
+
+        Cleanup: test user reset to currency=USD via PATCH /api/profile.
+
+        Full report: /app/test_reports/iteration_9.json. pytest XML: /app/test_reports/pytest/pytest_currency.xml.
+

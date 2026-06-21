@@ -27,9 +27,11 @@ import {
   enrichProductUrl,
   openProductWithSize,
 } from "@/src/utils/productLink";
+import { useCurrency } from "@/src/hooks/useCurrency";
 import { colors, radii, spacing, typography } from "@/src/theme";
 
 export default function WishlistTab() {
+  const { formatPrice, code: currencyCode } = useCurrency();
   const [wishlist, setWishlist] = useState<WishlistItem[]>([]);
   const [profile, setProfile] = useState<StyleProfile | null>(null);
   const [loading, setLoading] = useState(true);
@@ -121,6 +123,10 @@ export default function WishlistTab() {
             <Text style={styles.sizePillText}>Your size: {sizeDesc}</Text>
           </View>
         )}
+        <View style={[styles.sizePill, { marginTop: 6 }]} testID="wishlist-currency-pill">
+          <Ionicons name="cash-outline" size={12} color={colors.primary} />
+          <Text style={styles.sizePillText}>Prices in {currencyCode}</Text>
+        </View>
       </View>
 
       {loading ? (
@@ -154,7 +160,9 @@ export default function WishlistTab() {
                       <Text style={styles.cardName}>{w.name}</Text>
                       {w.description ? <Text style={styles.cardDesc}>{w.description}</Text> : null}
                       {w.target_price ? (
-                        <Text style={styles.cardTarget}>Target ${w.target_price}</Text>
+                        <Text style={styles.cardTarget} testID={`wishlist-target-${w.id}`}>
+                          Target {formatPrice(w.target_price, "USD")}
+                        </Text>
                       ) : null}
                     </View>
                     <TouchableOpacity
@@ -202,7 +210,7 @@ export default function WishlistTab() {
                             {p.note ? <Text style={styles.priceNote}>{p.note}</Text> : null}
                           </View>
                           <Text style={styles.priceVal}>
-                            ${p.estimated_price_low}–${p.estimated_price_high}
+                            {formatPrice(p.estimated_price_low, "USD")}–{formatPrice(p.estimated_price_high, "USD")}
                           </Text>
                         </TouchableOpacity>
                       ))}

@@ -16,8 +16,9 @@ import {
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useFocusEffect, useRouter } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
-import { api, Brand, WishlistItem } from "@/src/api";
+import { api, Brand } from "@/src/api";
 import { AvatarDashboard } from "@/src/components/AvatarDashboard";
+import { CurrencySettingRow } from "@/src/components/CurrencySettingRow";
 import { useAuth } from "@/src/useAuth";
 import { colors, spacing, typography } from "@/src/theme";
 
@@ -154,6 +155,8 @@ export default function Profile() {
           {tab === "account" && (
             <View>
               <AvatarDashboard />
+              <Text style={[styles.boxLabel, { marginTop: spacing.lg, marginBottom: spacing.sm }]}>SETTINGS</Text>
+              <CurrencySettingRow />
               <View style={[styles.accountBox, { marginTop: spacing.lg }]}>
                 <Text style={styles.boxLabel}>SIGNED IN AS</Text>
                 <Text style={styles.accountName}>{user?.name}</Text>
