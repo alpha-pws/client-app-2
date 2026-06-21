@@ -1,0 +1,64 @@
+{
+  "summary": "Phase 2 audit batch tested. Backend: 19/19 pytest tests pass — username system + signup auto-gen + /auth/me + /users/search (prefix match, friendship field, capped @20), PATCH /users/username (422/200/409), phone-hash registration + /contacts/match (phone & email matched_via), friend request via @username, block/unblock direction + 403 for non-blocker unblock + edge removal on unblock, email back-compat, image messages (200 with image_base64, 400 empty, 413 oversize >6MB decoded, GET history). Startup log lines 'indexes ensured' and 'legacy usernames backfilled' present. Frontend: All 6 bottom tabs render correctly; Wishlist standalone tab renders wishlist-screen + wishlist-add-button (size-pill absent because test user has no measurements — expected); onboarding wheel pickers (onboard-height/weight) render as scroll wheels; @username friend search shows 'User not found' inline for bogus, PENDING SENT for valid user; chat-camera-button + chat-gallery-button present at /social/chat/{friendId}. CRITICAL FRONTEND BUG: Profile tab crashes with ReferenceError: 'showAdd is not defined' at /app/frontend/app/(tabs)/profile.tsx:172 — orphan Wishlist Add modal references state vars that were deleted when Wishlist became its own tab. This blocks the entire Profile screen.",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [
+      {
+        "component": "Profile tab",
+        "issue": "ReferenceError: showAdd is not defined at app/(tabs)/profile.tsx:172. Orphan <Modal visible={showAdd}> + bound TextInputs (wName/wDesc/wImage/etc.) and a setShowAdd onRequestClose still reference removed Wishlist-Add state. The whole Profile screen renders an Uncaught Error overlay so AvatarDashboard, Brands, Account subtabs are all blocked.",
+        "testID": "bottom-tab-profile",
+        "priority": "CRITICAL"
+      },
+      {
+        "component": "Chat header",
+        "issue": "Header shows 'Chat' instead of the friend's name and empty placeholder 'Start the conversation with .' — friend name not loaded into the header context when route is opened directly. Reference: app/social/chat/[friendId].tsx",
+        "testID": "chat-screen",
+        "priority": "LOW"
+      },
+      {
+        "component": "Social → Add friend label",
+        "issue": "Label reads 'ADD FRIEND BY EMAIL' and placeholder is 'friend@example.com', but the field accepts @username too. Misleading copy.",
+        "testID": "add-friend-input",
+        "priority": "LOW"
+      },
+      {
+        "component": "Social → Messages tab",
+        "issue": "Messages tab shows 'No messages yet' even when friend list has accepted friends; no entry point to start a chat from Messages until at least one message exists. Friends sub-tab also does not appear to expose a 'Chat' action on each friend row (could not be confirmed because of empty state during test).",
+        "testID": "social-tab-messages",
+        "priority": "MEDIUM"
+      }
+    ],
+    "integration_issues": [],
+    "design_issues": [],
+    "react_native_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_phase2_audit.py",
+    "/app/test_reports/pytest/pytest_phase2.xml"
+  ],
+  "action_items": [
+    "FIX (CRITICAL): Delete the orphan Wishlist Add Modal block in /app/frontend/app/(tabs)/profile.tsx around line 171-end (Modal visible={showAdd} ... and its closing </Modal>). It still references showAdd/setShowAdd, wName/setWName, wDesc/setWDesc, wImage/setWImage, addWish, etc. which were removed when Wishlist was moved to /(tabs)/wishlist.tsx. Without this fix Profile tab is unusable.",
+    "Rename the Social add-friend label/placeholder to 'ADD FRIEND BY @USERNAME OR EMAIL' (or similar) so users discover the new @username flow.",
+    "Show friend name in chat header (load friend doc via /api/friends or pass name in route params) and fix empty placeholder 'Start the conversation with .'",
+    "Allow opening a chat from the Friends sub-tab (or surface accepted friends in Messages tab with empty thread state) so users can start chatting with a brand-new friend."
+  ],
+  "critical_code_review_comments": [
+    "/app/frontend/app/(tabs)/profile.tsx still imports Modal/KeyboardAvoidingView and renders the dead Wishlist-Add modal (lines ~171-230). Dead/leftover code crashes the screen.",
+    "Backend /api/messages oversize check is on decoded bytes (raw_b64 length * 3 / 4 > 6 MB). Spec says '~7 MB raw base64' would 413 — 7 MB raw decodes to ~5.25 MB so it does NOT 413. This is consistent with the spec text intent (≤6 MB decoded), but the spec example value is misleading. No code change required; just keep this in mind for QA payload sizes."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_phase2_audit.py (new — 19 phase-2 backend tests)"
+  ],
+  "success_rate": {
+    "backend": "100% (19/19)",
+    "frontend": "85% (6 of 7 frontend checks pass; Profile tab crashes; chat header copy minor)"
+  },
+  "seed_data_creation": "Created QA users via signup with timestamped emails qa+ph2_userA_<ts>@closetai.com and qa+ph2_userB_<ts>@closetai.com for backend tests. Also reused alice@closetai.com and accepted a friend-request between test@closetai.com and alice@closetai.com to enable the chat-camera UI check.",
+  "retest_needed": true,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Once main agent removes the orphan Wishlist Add modal from profile.tsx, retest: (a) Profile tab renders AvatarDashboard + Brands + Account subtabs without crash; (b) Account subtab does NOT have a 'Wishlist' option; (c) Avatar completion bar still ticks up. The backend phase-2 suite at /app/backend/tests/test_phase2_audit.py is the regression target — keep it green.",
+  "rca_of_issue": "Profile crash RCA: In moving Wishlist out of the Profile tab into a standalone (tabs)/wishlist.tsx route, the state hooks (showAdd, wName, wDesc, wImage, etc.) and the addWish/loadWishlist callbacks were removed from Profile, but the JSX still contains the <Modal visible={showAdd} ...> + its internal TextInputs and the setShowAdd onRequestClose handler. Because the component references undefined identifiers at render time, React throws a ReferenceError that the dev-mode RedBox surfaces as 'Uncaught Error: showAdd is not defined' at profile.tsx:27:27 (the line reported is the first hook line; the actual offending reference is line 172). Fix: delete lines 171-end-of-modal (around line ~230) plus any stale imports (Modal, KeyboardAvoidingView, Platform if unused). Re-run the frontend test."
+}

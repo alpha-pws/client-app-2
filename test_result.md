@@ -194,12 +194,114 @@ test_plan:
 agent_communication:
     - agent: "main"
       message: |
-        Phase 1 of the Big Audit complete. Three high-impact features added:
-        1. **Closet upload hardening** — client-side compression (expo-image-manipulator, resize≤1600px, JPEG q=0.7), 3-attempt exponential-backoff retry with per-attempt timeout, granular HTTP error mapping, cancel button, structured backend logging, and 413 guard for >6 MB. File: /app/frontend/src/upload.ts + /app/frontend/app/wardrobe/add.tsx + /app/backend/server.py.
-        2. **Avatar/Profile persistence dashboard** — new `AvatarDashboard` (/app/frontend/src/components/AvatarDashboard.tsx) on Profile→Account showing all 18 fields with completion %, "Not provided" placeholders, per-row deep-link to /profile-edit?mode=edit&step=… Edit screen now preloads existing values from /api/profile so users never start over.
-        3. **Age 13+ with guardian consent** — signup screen now asks for birth year; computes age; rejects <13 with friendly copy; for 13–17, reveals guardian-email field which is saved server-side with `guardian_consent: "pending"`.
-        Confirmed via backend logs that compressed photo uploads succeed at ~280 KB (was previously failing at multi-MB).
-        Please run frontend test covering: (a) Add Photo flow with progress/error UI; (b) Profile→Account Avatar Dashboard rendering with values & completion meter; (c) signup happy paths for adult, 13–17, and <13 (just frontend validation — the dialog blocks submission).
+        Phase 2 of the Big Audit is complete. Massive batch shipped:
+
+        BACKEND (already verified running, indexes ensured on startup):
+        1. **Username system** — new `username` field on users, unique sparse index, auto-generated on signup (slugified name + dedupe), backfilled for legacy users at startup, PATCH /users/username endpoint.
+        2. **Friend Discovery v2** — new `GET /users/search?q=...` (prefix-match username + substring name), new `POST /contacts/match` (matches by email OR SHA-256 phone hash), `POST /users/phone` to register the caller's own hashed number, `POST /friends/{id}/block` + `/unblock`, `POST /friends/request` now accepts {email | username | user_id}.
+        3. **Image messages** — `POST /messages` now accepts `image_base64` (with size guard 6 MB) and `text` defaults to "". `MessageItem` returns `image_base64`.
+        4. **Indexes & perf** — startup hook creates indexes on `users(email/username/phone_hash)`, `wardrobe(user_id, created_at)`, `messages(from/to, created_at)`, `friendships(user_ids, status)`, `wishlist`, `events`, `reminders`.
+
+        FRONTEND:
+        5. **Standalone Wishlist tab** at /(tabs)/wishlist with the new pinterest-style card layout. Wishlist removed from Profile tab. **Deep links open product URL with the user's preferred size pre-applied** via `enrichProductUrl()` (Zara/ASOS/H&M/Uniqlo/Nike/Adidas/Shein/Nordstrom/Amazon/Myntra). Shows a "Your size: …" pill at the top so users know what's being applied.
+        6. **Chat camera + image messages** — Camera & Gallery icons in the chat composer, image picker → expo-image-manipulator compresses → `api.sendMessage({image_base64})`. Image bubbles render inside chat.
+        7. **Friend Discovery v2 UI** — `@username` or email or bare username in the add-friend field now all work (auto-detect). Contact import now also collects PHONE numbers, hashes them client-side with expo-crypto SHA-256 (last-10-digits), and calls `/contacts/match`.
+        8. **WheelPicker** component (custom, no native code, snap-to-interval ScrollView). Onboarding body step now uses WheelPicker for Height (140–215 cm) and Weight (35–160 kg).
+        9. **Auto-login confirmed working** — useAuth.refresh() reads token from secure storage at app launch; index.tsx routes signed-in users to /welcome → wardrobe.
+        10. **Chat history persistence confirmed working** — `useFocusEffect` reloads `/api/messages/{friendId}` on chat open and auto-refreshes every 5 s.
+
+        Bottom tab bar now has 6 tabs: Closet · Stylist · Wishlist · Calendar · Social · Profile.
+
+        Please test:
+        BACKEND
+          - POST /api/auth/signup returns user with `username` populated.
+          - GET /api/users/search?q=<prefix> returns up to 20 results with `friendship` state.
+          - POST /api/contacts/match with `emails: [...]` and `phone_hashes: [sha256(last10digits)]` returns matched users.
+          - POST /api/friends/request accepts `{username: "..."}` and `{user_id: "..."}`.
+          - POST /api/friends/{id}/block then verify GET /api/friends shows status="blocked", direction="blocked-by-me". POST /api/friends/{id}/unblock removes the row.
+          - POST /api/messages with `image_base64` (small ≤6 MB) → 200; empty payload → 400.
+          - PATCH /api/users/username with bad pattern (`Has Space`) → 422, taken username → 409, valid → 200.
+
+        FRONTEND
+          - Sign in as test@closetai.com → app should auto-route past Login → Welcome → Closet. (Auto-login verified via screenshot.)
+          - Wishlist tab is visible in bottom bar (testID `bottom-tab-wishlist`). Profile tab no longer has Wishlist sub-tab.
+          - Wishlist screen renders `wishlist-screen` testID with size pill (`wishlist-size-pill`) when profile has measurements.
+          - Chat screen exposes `chat-camera-button` and `chat-gallery-button`. (Cannot actually pick file in headless mode but they should render.)
+          - Social tab's add-friend field accepts `@somebody` → sends username friend request.
+          - Onboarding body step shows wheel pickers for height/weight (testIDs `onboard-height` / `onboard-weight`).
+
+test_plan:
+  current_focus:
+    - "Username system + Friend Discovery v2 backend"
+    - "Image messages in chat (frontend + backend)"
+    - "Standalone Wishlist tab with size-aware product links"
+    - "WheelPicker onboarding"
+    - "Auto-login + chat history (already verified)"
+  stuck_tasks: []
+  test_all: false
+  test_priority: "high_first"
+
+backend:
+  - task: "Username system + Friend Discovery v2"
+    implemented: true
+    working: "NA"
+    file: "/app/backend/server.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: true
+    status_history:
+        - working: "NA"
+          agent: "main"
+          comment: "Added: _generate_username, _hash_phone helpers; signup auto-creates username; GET /users/search; POST /contacts/match; POST /users/phone; PATCH /users/username; POST /friends/{id}/block + unblock. Friend request accepts {email|username|user_id}. Startup hook backfills usernames for legacy users."
+
+  - task: "Image messages + indexes"
+    implemented: true
+    working: "NA"
+    file: "/app/backend/server.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: true
+    status_history:
+        - working: "NA"
+          agent: "main"
+          comment: "MessageCreate/MessageItem now carry image_base64. POST /messages strips data-URI prefix and enforces ≤6 MB. Startup creates indexes on users, wardrobe, messages, friendships, wishlist, events, reminders. test_credentials still test@closetai.com / test1234."
+
+frontend:
+  - task: "Standalone Wishlist tab with size-aware product links"
+    implemented: true
+    working: "NA"
+    file: "/app/frontend/app/(tabs)/wishlist.tsx"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: true
+    status_history:
+        - working: "NA"
+          agent: "main"
+          comment: "New top-level tab. Uses /src/utils/productLink.ts to append size param per host (Zara/ASOS/etc.). Removed from Profile."
+
+  - task: "Chat camera + image messages"
+    implemented: true
+    working: "NA"
+    file: "/app/frontend/app/social/chat/[friendId].tsx"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: true
+    status_history:
+        - working: "NA"
+          agent: "main"
+          comment: "Camera/gallery buttons in composer. Images compressed via upload util and sent as image_base64. Chat bubble renders image if present."
+
+  - task: "Friend Discovery v2 UI + WheelPicker onboarding"
+    implemented: true
+    working: "NA"
+    file: "/app/frontend/app/(tabs)/social.tsx, /app/frontend/app/onboarding.tsx"
+    stuck_count: 0
+    priority: "medium"
+    needs_retesting: true
+    status_history:
+        - working: "NA"
+          agent: "main"
+          comment: "Social: @username/email auto-detect; contact import sends hashed phones via expo-crypto. Onboarding body step uses WheelPicker for Height/Weight."
 
 test_plan:
   current_focus:

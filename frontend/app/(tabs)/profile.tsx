@@ -21,23 +21,14 @@ import { AvatarDashboard } from "@/src/components/AvatarDashboard";
 import { useAuth } from "@/src/useAuth";
 import { colors, spacing, typography } from "@/src/theme";
 
-type Tab = "wishlist" | "brands" | "account";
+type Tab = "brands" | "account";
 
 export default function Profile() {
   const router = useRouter();
   const { user, logout } = useAuth();
-  const [tab, setTab] = useState<Tab>("wishlist");
-  const [wishlist, setWishlist] = useState<WishlistItem[]>([]);
+  const [tab, setTab] = useState<Tab>("brands");
   const [brands, setBrands] = useState<Brand[]>([]);
   const [loading, setLoading] = useState(true);
-  const [comparingId, setComparingId] = useState<string | null>(null);
-
-  // wishlist add modal
-  const [showAdd, setShowAdd] = useState(false);
-  const [wName, setWName] = useState("");
-  const [wDesc, setWDesc] = useState("");
-  const [wPrice, setWPrice] = useState("");
-  const [wLink, setWLink] = useState("");
 
   // brand add
   const [showBrandAdd, setShowBrandAdd] = useState(false);
@@ -46,8 +37,7 @@ export default function Profile() {
 
   const load = useCallback(async () => {
     try {
-      const [w, b] = await Promise.all([api.listWishlist(), api.listBrands()]);
-      setWishlist(w);
+      const b = await api.listBrands();
       setBrands(b);
     } catch (e: any) {
       console.warn(e.message);
@@ -61,43 +51,6 @@ export default function Profile() {
       load();
     }, [load]),
   );
-
-  const addWish = async () => {
-    if (!wName) return;
-    try {
-      await api.addWishlist({
-        name: wName,
-        description: wDesc || undefined,
-        target_price: wPrice ? parseFloat(wPrice) : undefined,
-        link: wLink || undefined,
-      });
-      setWName("");
-      setWDesc("");
-      setWPrice("");
-      setWLink("");
-      setShowAdd(false);
-      load();
-    } catch (e: any) {
-      console.warn(e.message);
-    }
-  };
-
-  const compare = async (id: string) => {
-    setComparingId(id);
-    try {
-      const updated = await api.compareWishlist(id);
-      setWishlist((prev) => prev.map((w) => (w.id === id ? updated : w)));
-    } catch (e: any) {
-      console.warn(e.message);
-    } finally {
-      setComparingId(null);
-    }
-  };
-
-  const deleteWish = async (id: string) => {
-    await api.deleteWishlist(id);
-    setWishlist((prev) => prev.filter((w) => w.id !== id));
-  };
 
   const addBrand = async () => {
     if (!bName || !bUrl) return;
@@ -132,7 +85,6 @@ export default function Profile() {
       <View style={styles.tabRow}>
         {(
           [
-            { id: "wishlist" as const, label: "Wishlist" },
             { id: "brands" as const, label: "Brands" },
             { id: "account" as const, label: "Account" },
           ]
@@ -155,77 +107,6 @@ export default function Profile() {
         <ActivityIndicator color={colors.primary} style={{ marginTop: 40 }} />
       ) : (
         <ScrollView contentContainerStyle={{ padding: spacing.xl, paddingBottom: 120 }}>
-          {tab === "wishlist" && (
-            <>
-              <TouchableOpacity
-                testID="wishlist-add-button"
-                style={styles.addRowBtn}
-                onPress={() => setShowAdd(true)}
-              >
-                <Ionicons name="add" size={18} color={colors.primaryFg} />
-                <Text style={styles.addRowBtnText}>Add to Wishlist</Text>
-              </TouchableOpacity>
-              {wishlist.length === 0 ? (
-                <Text style={styles.emptySub}>Nothing on your wishlist yet.</Text>
-              ) : (
-                wishlist.map((w) => (
-                  <View key={w.id} style={styles.wishCard} testID={`wishlist-item-${w.id}`}>
-                    <View style={styles.wishHead}>
-                      <View style={{ flex: 1 }}>
-                        <Text style={styles.wishName}>{w.name}</Text>
-                        {w.description ? <Text style={styles.wishDesc}>{w.description}</Text> : null}
-                        {w.target_price ? (
-                          <Text style={styles.wishTarget}>Target: ${w.target_price}</Text>
-                        ) : null}
-                      </View>
-                      <TouchableOpacity onPress={() => deleteWish(w.id)} testID={`wishlist-delete-${w.id}`}>
-                        <Ionicons name="trash-outline" size={18} color={colors.accent} />
-                      </TouchableOpacity>
-                    </View>
-                    {w.price_results && w.price_results.length > 0 && (
-                      <View style={styles.priceList}>
-                        {w.price_results.map((p, i) => (
-                          <TouchableOpacity
-                            key={`${p.site}-${i}`}
-                            style={[styles.priceRow, p.is_best_pick && styles.priceRowBest]}
-                            onPress={() => p.url && Linking.openURL(p.url)}
-                          >
-                            <View style={{ flex: 1 }}>
-                              <Text style={[styles.priceSite, p.is_best_pick && { color: colors.accent }]}>
-                                {p.site} {p.is_best_pick ? "★ BEST" : ""}
-                              </Text>
-                              {p.note ? <Text style={styles.priceNote}>{p.note}</Text> : null}
-                            </View>
-                            <Text style={styles.priceVal}>
-                              ${p.estimated_price_low}–${p.estimated_price_high}
-                            </Text>
-                          </TouchableOpacity>
-                        ))}
-                      </View>
-                    )}
-                    <TouchableOpacity
-                      testID={`wishlist-compare-${w.id}`}
-                      style={[styles.compareBtn, comparingId === w.id && { opacity: 0.5 }]}
-                      onPress={() => compare(w.id)}
-                      disabled={comparingId === w.id}
-                    >
-                      {comparingId === w.id ? (
-                        <ActivityIndicator color={colors.primary} size="small" />
-                      ) : (
-                        <>
-                          <Ionicons name="search" size={14} color={colors.primary} />
-                          <Text style={styles.compareBtnText}>
-                            {w.price_results ? "Re-check prices" : "Find best price"}
-                          </Text>
-                        </>
-                      )}
-                    </TouchableOpacity>
-                  </View>
-                ))
-              )}
-            </>
-          )}
-
           {tab === "brands" && (
             <>
               <TouchableOpacity

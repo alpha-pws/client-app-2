@@ -10,8 +10,23 @@ export type User = {
   id: string;
   email: string;
   name: string;
+  username?: string | null;
   avatar?: string | null;
   created_at: string;
+};
+
+export type UserSearchResult = {
+  id: string;
+  name: string;
+  username?: string | null;
+  email?: string;
+  avatar?: string | null;
+  friendship?: {
+    friendship_id: string;
+    status: string;
+    direction: string;
+  };
+  matched_via?: "email" | "phone";
 };
 
 export type WardrobeItem = {
@@ -88,6 +103,7 @@ export type Message = {
   from_user_id: string;
   to_user_id: string;
   text: string;
+  image_base64?: string | null;
   recommended_item_id?: string | null;
   recommended_item_snapshot?: {
     id: string;
@@ -372,16 +388,30 @@ export const api = {
 
   // friends
   listFriends: () => request<Friend[]>("/friends"),
-  sendFriendRequest: (email: string) =>
-    request<Friend>("/friends/request", { method: "POST", body: { email } }),
+  sendFriendRequest: (target: { email?: string; username?: string; user_id?: string }) =>
+    request<Friend>("/friends/request", { method: "POST", body: target }),
   acceptFriend: (id: string) =>
     request<Friend>(`/friends/${id}/accept`, { method: "POST" }),
   removeFriend: (id: string) =>
     request<{ ok: true }>(`/friends/${id}`, { method: "DELETE" }),
+  blockFriend: (id: string) =>
+    request<Friend>(`/friends/${id}/block`, { method: "POST" }),
+  unblockFriend: (id: string) =>
+    request<Friend>(`/friends/${id}/unblock`, { method: "POST" }),
   updateFriendAccess: (id: string, access_level: "full" | "limited" | "none") =>
     request<Friend>(`/friends/${id}/access`, { method: "PATCH", body: { access_level } }),
   viewFriendWardrobe: (friendUserId: string) =>
     request<WardrobeItem[]>(`/friends/${friendUserId}/wardrobe`),
+
+  // Friend Discovery v2
+  searchUsers: (q: string) =>
+    request<UserSearchResult[]>(`/users/search?q=${encodeURIComponent(q)}`),
+  matchContacts: (body: { emails?: string[]; phone_hashes?: string[] }) =>
+    request<UserSearchResult[]>("/contacts/match", { method: "POST", body }),
+  registerPhoneHash: (phone_hash: string) =>
+    request<{ ok: boolean }>("/users/phone", { method: "POST", body: { phone_hash } }),
+  updateUsername: (username: string) =>
+    request<User>("/users/username", { method: "PATCH", body: { username } }),
 
   // messages
   listThreads: () =>
@@ -394,8 +424,12 @@ export const api = {
     >("/messages"),
   getMessages: (friendUserId: string) =>
     request<Message[]>(`/messages/${friendUserId}`),
-  sendMessage: (body: { to_user_id: string; text: string; recommended_item_id?: string }) =>
-    request<Message>("/messages", { method: "POST", body }),
+  sendMessage: (body: {
+    to_user_id: string;
+    text?: string;
+    recommended_item_id?: string;
+    image_base64?: string;
+  }) => request<Message>("/messages", { method: "POST", body }),
 
   // contacts lookup
   lookupUsers: (emails: string[]) =>

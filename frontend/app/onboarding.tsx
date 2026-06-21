@@ -17,7 +17,17 @@ import { useLocalSearchParams, useRouter } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
 import { api } from "@/src/api";
 import { ensureLocationPermission, getCurrentCoords } from "@/src/location";
+import { makeRange, WheelPicker } from "@/src/components/WheelPicker";
 import { colors, radii, shadows, spacing, typography } from "@/src/theme";
+
+const HEIGHTS = makeRange(140, 215, 1, " cm");
+const WEIGHTS = makeRange(35, 160, 1, " kg");
+const SHOE_SIZES = [
+  ...makeRange(3, 14, 0.5, ""),
+].map((s) => `US ${s}`);
+const CHEST_OPTS = makeRange(70, 140, 1, " cm");
+const WAIST_OPTS = makeRange(55, 130, 1, " cm");
+const HIPS_OPTS = makeRange(70, 140, 1, " cm");
 
 const STYLES_LIST = [
   { id: "classic", label: "Classic" },
@@ -203,26 +213,22 @@ export default function Onboarding() {
           {step === "body" && (
             <View>
               <Section title="Body Profile" hint="Two required. Everything else optional." />
-              <Field label="Height (cm)">
-                <TextInput
+              <Field label="Height">
+                <WheelPicker
                   testID="onboard-height"
-                  value={height}
-                  onChangeText={setHeight}
-                  keyboardType="numeric"
-                  style={styles.input}
-                  placeholder="e.g. 175"
-                  placeholderTextColor={colors.subtle}
+                  items={HEIGHTS}
+                  value={height ? `${height} cm` : "175 cm"}
+                  onChange={(v) => setHeight(v.replace(/[^0-9]/g, ""))}
+                  height={140}
                 />
               </Field>
-              <Field label="Weight (kg)">
-                <TextInput
+              <Field label="Weight">
+                <WheelPicker
                   testID="onboard-weight"
-                  value={weight}
-                  onChangeText={setWeight}
-                  keyboardType="numeric"
-                  style={styles.input}
-                  placeholder="e.g. 70"
-                  placeholderTextColor={colors.subtle}
+                  items={WEIGHTS}
+                  value={weight ? `${weight} kg` : "70 kg"}
+                  onChange={(v) => setWeight(v.replace(/[^0-9]/g, ""))}
+                  height={140}
                 />
               </Field>
               <Field label="Age range">

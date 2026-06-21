@@ -13,8 +13,10 @@ import {
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useFocusEffect, useLocalSearchParams, useRouter } from "expo-router";
+import * as ImagePicker from "expo-image-picker";
 import { Ionicons } from "@expo/vector-icons";
 import { api, Message } from "@/src/api";
+import { compressImage } from "@/src/upload";
 import { useAuth } from "@/src/useAuth";
 import { colors, spacing, typography } from "@/src/theme";
 
@@ -65,6 +67,41 @@ export default function Chat() {
     }
   };
 
+  const sendImage = async (source: "camera" | "gallery") => {
+    if (!friendId || sending) return;
+    try {
+      const perm =
+        source === "camera"
+          ? await ImagePicker.requestCameraPermissionsAsync()
+          : await ImagePicker.requestMediaLibraryPermissionsAsync();
+      if (!perm.granted) return;
+      const r =
+        source === "camera"
+          ? await ImagePicker.launchCameraAsync({
+              mediaTypes: ImagePicker.MediaTypeOptions.Images,
+              quality: 1,
+            })
+          : await ImagePicker.launchImageLibraryAsync({
+              mediaTypes: ImagePicker.MediaTypeOptions.Images,
+              quality: 1,
+            });
+      if (r.canceled || !r.assets[0]?.uri) return;
+      setSending(true);
+      const compressed = await compressImage(r.assets[0].uri);
+      const m = await api.sendMessage({
+        to_user_id: friendId,
+        image_base64: compressed.base64,
+        text: "",
+      });
+      setMessages((prev) => [...prev, m]);
+      setTimeout(() => listRef.current?.scrollToEnd({ animated: true }), 100);
+    } catch (e: any) {
+      console.warn("[chat] sendImage failed", e?.message || e);
+    } finally {
+      setSending(false);
+    }
+  };
+
   const renderItem = ({ item }: { item: Message }) => {
     const mine = item.from_user_id === user?.id;
     return (
@@ -84,7 +121,16 @@ export default function Chat() {
               </Text>
             </View>
           )}
-          <Text style={[styles.bubbleText, mine && { color: colors.primaryFg }]}>{item.text}</Text>
+          {item.image_base64 && (
+            <Image
+              source={{ uri: `data:image/jpeg;base64,${item.image_base64}` }}
+              style={styles.chatPhoto}
+              testID={`chat-image-${item.id}`}
+            />
+          )}
+          {!!item.text && (
+            <Text style={[styles.bubbleText, mine && { color: colors.primaryFg }]}>{item.text}</Text>
+          )}
         </View>
       </View>
     );
@@ -129,6 +175,24 @@ export default function Chat() {
           />
         )}
         <View style={styles.inputBar}>
+          <TouchableOpacity
+            testID="chat-camera-button"
+            style={styles.iconBtn}
+            onPress={() => sendImage("camera")}
+            disabled={sending}
+            hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+          >
+            <Ionicons name="camera" size={22} color={colors.primary} />
+          </TouchableOpacity>
+          <TouchableOpacity
+            testID="chat-gallery-button"
+            style={styles.iconBtn}
+            onPress={() => sendImage("gallery")}
+            disabled={sending}
+            hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+          >
+            <Ionicons name="image" size={22} color={colors.primary} />
+          </TouchableOpacity>
           <TextInput
             testID="chat-msg-input"
             value={input}
@@ -193,6 +257,20 @@ const styles = StyleSheet.create({
   snapshot: { marginBottom: 8 },
   snapImg: { width: 140, height: 160, backgroundColor: colors.muted },
   snapLabel: { fontSize: 11, fontWeight: "700", marginTop: 4, color: colors.mutedFg },
+  chatPhoto: {
+    width: 200,
+    height: 220,
+    borderRadius: 12,
+    backgroundColor: colors.muted,
+    marginBottom: 4,
+  },
+  iconBtn: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    alignItems: "center",
+    justifyContent: "center",
+  },
   inputBar: {
     flexDirection: "row",
     alignItems: "flex-end",

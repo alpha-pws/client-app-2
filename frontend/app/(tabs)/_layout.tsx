@@ -8,6 +8,7 @@ import { colors, radii, shadows } from "@/src/theme";
 const ICONS: Record<string, { active: keyof typeof Ionicons.glyphMap; inactive: keyof typeof Ionicons.glyphMap }> = {
   wardrobe: { active: "shirt", inactive: "shirt-outline" },
   outfits: { active: "sparkles", inactive: "sparkles-outline" },
+  wishlist: { active: "bag-handle", inactive: "bag-handle-outline" },
   calendar: { active: "calendar", inactive: "calendar-outline" },
   social: { active: "people", inactive: "people-outline" },
   profile: { active: "person", inactive: "person-outline" },
@@ -16,6 +17,7 @@ const ICONS: Record<string, { active: keyof typeof Ionicons.glyphMap; inactive: 
 const LABELS: Record<string, string> = {
   wardrobe: "Closet",
   outfits: "Stylist",
+  wishlist: "Wishlist",
   calendar: "Calendar",
   social: "Social",
   profile: "Profile",
@@ -71,6 +73,7 @@ export default function TabsLayout() {
     >
       <Tabs.Screen name="wardrobe" />
       <Tabs.Screen name="outfits" />
+      <Tabs.Screen name="wishlist" />
       <Tabs.Screen name="calendar" />
       <Tabs.Screen name="social" />
       <Tabs.Screen name="profile" />

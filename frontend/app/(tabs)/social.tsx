@@ -19,8 +19,16 @@ import { SafeAreaView } from "react-native-safe-area-context";
 import { useFocusEffect, useRouter } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
 import * as Contacts from "expo-contacts";
+import * as Crypto from "expo-crypto";
 import { api, Friend } from "@/src/api";
 import { colors, spacing, typography } from "@/src/theme";
+
+async function hashPhoneClient(phone: string): Promise<string> {
+  const digits = (phone || "").replace(/[^0-9]/g, "");
+  if (!digits) return "";
+  const tail = digits.slice(-10);
+  return await Crypto.digestStringAsync(Crypto.CryptoDigestAlgorithm.SHA256, tail);
+}
 
 type Tab = "friends" | "messages" | "requests";
 
@@ -67,15 +75,23 @@ export default function Social() {
   );
 
   const sendRequest = async () => {
-    if (!addEmail.trim()) return;
+    const raw = addEmail.trim();
+    if (!raw) return;
     setError(null);
     setAdding(true);
     try {
-      await api.sendFriendRequest(addEmail.trim());
+      if (raw.startsWith("@")) {
+        await api.sendFriendRequest({ username: raw.slice(1).toLowerCase() });
+      } else if (raw.includes("@")) {
+        await api.sendFriendRequest({ email: raw });
+      } else {
+        // bare text → treat as username
+        await api.sendFriendRequest({ username: raw.toLowerCase() });
+      }
       setAddEmail("");
       load();
     } catch (e: any) {
-      setError(e.message);
+      setError(e.message?.replace(/^HTTP\s+\d+:\s*/, "") || "Failed to send request");
     } finally {
       setAdding(false);
     }
@@ -115,22 +131,44 @@ export default function Social() {
         return;
       }
       const { data } = await Contacts.getContactsAsync({
-        fields: [Contacts.Fields.Emails, Contacts.Fields.Name, Contacts.Fields.Image],
+        fields: [
+          Contacts.Fields.Emails,
+          Contacts.Fields.Name,
+          Contacts.Fields.Image,
+          Contacts.Fields.PhoneNumbers,
+        ],
         pageSize: 2000,
       });
       const emails: string[] = [];
+      const phones: string[] = [];
       data.forEach((c) => {
         c.emails?.forEach((e) => {
           if (e.email) emails.push(e.email);
         });
+        c.phoneNumbers?.forEach((p) => {
+          if (p.number) phones.push(p.number);
+        });
       });
-      if (emails.length === 0) {
-        Alert.alert("No emails", "We couldn't find any contacts with email addresses.");
+      if (emails.length === 0 && phones.length === 0) {
+        Alert.alert("No contacts", "We couldn't find any contacts with emails or phone numbers.");
         setContactsLoading(false);
         return;
       }
-      const matches = await api.lookupUsers(emails);
-      setContactsMatches(matches);
+      // Hash phone numbers client-side before sending (privacy preserving).
+      const phoneHashes = await Promise.all(phones.map(hashPhoneClient));
+      const matches = await api.matchContacts({
+        emails: emails.slice(0, 500),
+        phone_hashes: phoneHashes.filter(Boolean),
+      });
+      setContactsMatches(
+        matches.map((m) => ({
+          id: m.id,
+          name: m.name,
+          email: m.email || "",
+          avatar: m.avatar ?? null,
+          friend_status: m.friendship?.status || null,
+        })),
+      );
     } catch (e: any) {
       Alert.alert("Failed", e.message);
     } finally {
@@ -141,7 +179,7 @@ export default function Social() {
   const inviteContact = async (email: string, userId: string) => {
     setContactRequesting(userId);
     try {
-      await api.sendFriendRequest(email);
+      await api.sendFriendRequest({ email });
       setContactsMatches((prev) =>
         prev.map((m) => (m.id === userId ? { ...m, friend_status: "pending" } : m)),
       );

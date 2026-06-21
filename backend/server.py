@@ -124,6 +124,7 @@ class UserPublic(BaseModel):
     id: str
     email: str
     name: str
+    username: Optional[str] = None
     avatar: Optional[str] = None
     created_at: str
 
@@ -240,7 +241,15 @@ class EventItem(BaseModel):
 
 
 class FriendRequestBody(BaseModel):
-    email: EmailStr
+    # Accept either an email, a username, or a user_id. At least one is required.
+    email: Optional[EmailStr] = None
+    username: Optional[str] = None
+    user_id: Optional[str] = None
+
+
+class ContactMatchBody(BaseModel):
+    emails: List[EmailStr] = []
+    phone_hashes: List[str] = []  # client-side SHA-256 of normalized phone numbers
 
 
 class FriendAccessUpdate(BaseModel):
@@ -252,17 +261,19 @@ class FriendItem(BaseModel):
     friend_user_id: str
     friend_email: str
     friend_name: str
+    friend_username: Optional[str] = None
     friend_avatar: Optional[str] = None
     access_level: str
-    status: str  # pending, accepted
-    direction: str  # incoming, outgoing, friends
+    status: str  # pending | accepted | blocked
+    direction: str  # incoming, outgoing, friends, blocked-by-me, blocked-by-them
     created_at: str
 
 
 class MessageCreate(BaseModel):
     to_user_id: str
-    text: str
+    text: str = ""
     recommended_item_id: Optional[str] = None  # if recommending an outfit item
+    image_base64: Optional[str] = None  # for photo messages
 
 
 class MessageItem(BaseModel):
@@ -270,6 +281,7 @@ class MessageItem(BaseModel):
     from_user_id: str
     to_user_id: str
     text: str
+    image_base64: Optional[str] = None
     recommended_item_id: Optional[str] = None
     recommended_item_snapshot: Optional[dict] = None
     created_at: str
@@ -318,6 +330,7 @@ def user_to_public(user: dict) -> UserPublic:
         id=user["id"],
         email=user["email"],
         name=user["name"],
+        username=user.get("username"),
         avatar=user.get("avatar"),
         created_at=user["created_at"],
     )
@@ -351,6 +364,38 @@ async def _llm_send(chat: LlmChat, user_msg: UserMessage) -> str:
 MIN_AGE = 13
 
 
+_USERNAME_PATTERN = _re.compile(r"[^a-z0-9_]+")
+
+
+def _slugify_username(raw: str) -> str:
+    base = (raw or "user").strip().lower().replace(" ", "_")
+    base = _USERNAME_PATTERN.sub("", base) or "user"
+    return base[:18]
+
+
+async def _generate_username(name: str) -> str:
+    base = _slugify_username(name)
+    candidate = base
+    for i in range(0, 10_000):
+        if i:
+            candidate = f"{base}{i}"
+        existing = await db.users.find_one({"username": candidate})
+        if not existing:
+            return candidate
+    # fallback unique
+    return f"{base}_{uuid.uuid4().hex[:6]}"
+
+
+async def _hash_phone(phone: str) -> str:
+    """Normalize and hash a phone number for contact matching."""
+    digits = _re.sub(r"[^0-9]", "", phone or "")
+    if not digits:
+        return ""
+    # SHA-256 of last 10 digits (country-code-agnostic). Stable, irreversible.
+    digits = digits[-10:] if len(digits) >= 10 else digits
+    return hashlib.sha256(digits.encode("utf-8")).hexdigest()
+
+
 @api_router.post("/auth/signup", response_model=AuthResponse)
 async def signup(body: SignupBody):
     # Age gate (13+ with guardian email when under 18)
@@ -376,10 +421,12 @@ async def signup(body: SignupBody):
     existing = await db.users.find_one({"email": body.email.lower()})
     if existing:
         raise HTTPException(status_code=409, detail="Email already registered")
+    username = await _generate_username(body.name)
     user = {
         "id": str(uuid.uuid4()),
         "email": body.email.lower(),
         "name": body.name.strip(),
+        "username": username,
         "password_hash": hash_password(body.password),
         "avatar": None,
         "birth_year": body.birth_year,
@@ -789,7 +836,10 @@ async def suggest_event_outfit(event_id: str, user: dict = Depends(get_current_u
 # ---------------------------------------------------------------------------
 def _friendship_to_item(doc: dict, current_user_id: str, friend_user: dict) -> FriendItem:
     status_val = doc["status"]
-    if status_val == "accepted":
+    if status_val == "blocked":
+        blocker = doc.get("blocked_by")
+        direction = "blocked-by-me" if blocker == current_user_id else "blocked-by-them"
+    elif status_val == "accepted":
         direction = "friends"
     elif doc["requester_id"] == current_user_id:
         direction = "outgoing"
@@ -800,6 +850,7 @@ def _friendship_to_item(doc: dict, current_user_id: str, friend_user: dict) -> F
         friend_user_id=friend_user["id"],
         friend_email=friend_user["email"],
         friend_name=friend_user["name"],
+        friend_username=friend_user.get("username"),
         friend_avatar=friend_user.get("avatar"),
         access_level=doc.get("access_levels", {}).get(current_user_id, "limited"),
         status=status_val,
@@ -810,9 +861,15 @@ def _friendship_to_item(doc: dict, current_user_id: str, friend_user: dict) -> F
 
 @api_router.post("/friends/request", response_model=FriendItem)
 async def send_friend_request(body: FriendRequestBody, user: dict = Depends(get_current_user)):
-    target = await db.users.find_one({"email": body.email.lower()}, {"_id": 0})
+    target = None
+    if body.user_id:
+        target = await db.users.find_one({"id": body.user_id}, {"_id": 0})
+    elif body.username:
+        target = await db.users.find_one({"username": body.username.lower().strip()}, {"_id": 0})
+    elif body.email:
+        target = await db.users.find_one({"email": body.email.lower()}, {"_id": 0})
     if not target:
-        raise HTTPException(status_code=404, detail="No user with that email")
+        raise HTTPException(status_code=404, detail="User not found")
     if target["id"] == user["id"]:
         raise HTTPException(status_code=400, detail="Cannot add yourself")
     # Check if friendship exists either way
@@ -883,6 +940,153 @@ async def update_friend_access(friendship_id: str, body: FriendAccessUpdate, use
     return _friendship_to_item(updated, user["id"], other)
 
 
+# ---- Friend Discovery v2 ----
+
+@api_router.get("/users/search")
+async def search_users(q: str = "", user: dict = Depends(get_current_user)):
+    q = (q or "").strip().lower()
+    if len(q) < 2:
+        return []
+    safe = _re.escape(q)
+    cur = db.users.find(
+        {
+            "$and": [
+                {"id": {"$ne": user["id"]}},
+                {
+                    "$or": [
+                        {"username": {"$regex": f"^{safe}", "$options": "i"}},
+                        {"name": {"$regex": safe, "$options": "i"}},
+                    ]
+                },
+            ]
+        },
+        {"_id": 0, "id": 1, "name": 1, "username": 1, "avatar": 1, "email": 1},
+    ).limit(20)
+    docs = await cur.to_list(length=20)
+
+    # Resolve current friendship status for each result so the UI can show the right CTA.
+    if not docs:
+        return []
+    ids = [d["id"] for d in docs]
+    fs = await db.friendships.find(
+        {
+            "user_ids": {"$in": ids},
+            "user_ids_all": user["id"],
+        } if False else {
+            "user_ids": {"$all": [user["id"]]},
+        },
+        {"_id": 0},
+    ).to_list(length=500)
+    state: dict[str, dict] = {}
+    for f in fs:
+        other = next((u for u in f["user_ids"] if u != user["id"]), None)
+        if other in ids:
+            state[other] = {"friendship_id": f["id"], "status": f["status"], "direction":
+                ("outgoing" if f.get("requester_id") == user["id"] else "incoming") if f["status"] == "pending"
+                else f["status"]}
+    out = []
+    for d in docs:
+        out.append({
+            "id": d["id"],
+            "name": d["name"],
+            "username": d.get("username"),
+            "email": d.get("email"),
+            "avatar": d.get("avatar"),
+            "friendship": state.get(d["id"]),
+        })
+    return out
+
+
+@api_router.post("/contacts/match")
+async def contacts_match(body: ContactMatchBody, user: dict = Depends(get_current_user)):
+    """Given client-supplied emails + hashed phone numbers, return matching ClosetAI users."""
+    emails = [e.lower() for e in body.emails][:500]
+    hashes = list({h for h in body.phone_hashes if h})[:500]
+    if not emails and not hashes:
+        return []
+    or_clauses = []
+    if emails:
+        or_clauses.append({"email": {"$in": emails}})
+    if hashes:
+        or_clauses.append({"phone_hash": {"$in": hashes}})
+    docs = await db.users.find(
+        {"$and": [{"id": {"$ne": user["id"]}}, {"$or": or_clauses}]},
+        {"_id": 0, "id": 1, "name": 1, "username": 1, "avatar": 1, "email": 1},
+    ).limit(200).to_list(length=200)
+    return [
+        {
+            "id": d["id"],
+            "name": d["name"],
+            "username": d.get("username"),
+            "avatar": d.get("avatar"),
+            "matched_via": "email" if d["email"].lower() in emails else "phone",
+        }
+        for d in docs
+    ]
+
+
+class PhoneRegisterBody(BaseModel):
+    phone_hash: str
+
+
+@api_router.post("/users/phone")
+async def set_phone_hash(body: PhoneRegisterBody, user: dict = Depends(get_current_user)):
+    """Save the user's own hashed phone so future contact-match calls from friends can find them."""
+    h = (body.phone_hash or "").strip().lower()
+    if not h:
+        raise HTTPException(status_code=400, detail="Empty hash")
+    await db.users.update_one({"id": user["id"]}, {"$set": {"phone_hash": h}})
+    return {"ok": True}
+
+
+class UsernameUpdateBody(BaseModel):
+    username: str = Field(min_length=3, max_length=18, pattern=r"^[a-z0-9_]+$")
+
+
+@api_router.patch("/users/username", response_model=UserPublic)
+async def update_username(body: UsernameUpdateBody, user: dict = Depends(get_current_user)):
+    new = body.username.lower()
+    existing = await db.users.find_one({"username": new, "id": {"$ne": user["id"]}})
+    if existing:
+        raise HTTPException(status_code=409, detail="That username is taken.")
+    await db.users.update_one({"id": user["id"]}, {"$set": {"username": new}})
+    fresh = await db.users.find_one({"id": user["id"]}, {"_id": 0})
+    return user_to_public(fresh)
+
+
+@api_router.post("/friends/{friendship_id}/block", response_model=FriendItem)
+async def block_friend(friendship_id: str, user: dict = Depends(get_current_user)):
+    doc = await db.friendships.find_one({"id": friendship_id}, {"_id": 0})
+    if not doc or user["id"] not in doc["user_ids"]:
+        raise HTTPException(status_code=404, detail="Not found")
+    await db.friendships.update_one(
+        {"id": friendship_id},
+        {"$set": {"status": "blocked", "blocked_by": user["id"]}},
+    )
+    other_id = next((u for u in doc["user_ids"] if u != user["id"]), None)
+    other = await db.users.find_one({"id": other_id}, {"_id": 0}) if other_id else None
+    updated = await db.friendships.find_one({"id": friendship_id}, {"_id": 0})
+    return _friendship_to_item(updated, user["id"], other or {"id": other_id, "email": "", "name": ""})
+
+
+@api_router.post("/friends/{friendship_id}/unblock", response_model=FriendItem)
+async def unblock_friend(friendship_id: str, user: dict = Depends(get_current_user)):
+    doc = await db.friendships.find_one({"id": friendship_id}, {"_id": 0})
+    if not doc or user["id"] not in doc["user_ids"]:
+        raise HTTPException(status_code=404, detail="Not found")
+    if doc.get("blocked_by") != user["id"]:
+        raise HTTPException(status_code=403, detail="Only the user who blocked can unblock.")
+    # Delete the friendship row entirely so they can start fresh.
+    await db.friendships.delete_one({"id": friendship_id})
+    other_id = next((u for u in doc["user_ids"] if u != user["id"]), None)
+    other = await db.users.find_one({"id": other_id}, {"_id": 0}) if other_id else None
+    return _friendship_to_item(
+        {**doc, "status": "removed"},
+        user["id"],
+        other or {"id": other_id or "", "email": "", "name": ""},
+    )
+
+
 async def _check_access(viewer_id: str, owner_id: str) -> str:
     """Returns access level the OWNER has granted to the VIEWER. Self-access is 'full'."""
     if viewer_id == owner_id:
@@ -920,17 +1124,26 @@ def _msg_doc_to_model(d: dict) -> MessageItem:
 
 @api_router.post("/messages", response_model=MessageItem)
 async def send_message(body: MessageCreate, user: dict = Depends(get_current_user)):
-    # Must be friends
+    # Must be friends (not blocked).
     friendship = await db.friendships.find_one({
         "user_ids": {"$all": [user["id"], body.to_user_id]},
         "status": "accepted",
     }, {"_id": 0})
     if not friendship:
         raise HTTPException(status_code=403, detail="You can only message friends")
+    if not (body.text and body.text.strip()) and not body.image_base64 and not body.recommended_item_id:
+        raise HTTPException(status_code=400, detail="Message cannot be empty")
+
+    # Validate image size if present (≤6 MB base64 ≈ 4.5 MB binary).
+    img = body.image_base64 or None
+    if img:
+        if "," in img[:80]:
+            img = img.split(",", 1)[1]
+        if (len(img) * 3) // 4 > 6 * 1024 * 1024:
+            raise HTTPException(status_code=413, detail="Photo too large. Try a smaller image.")
 
     snapshot = None
     if body.recommended_item_id:
-        # snapshot the item (could be either user's item)
         item = await db.wardrobe.find_one({"id": body.recommended_item_id}, {"_id": 0})
         if item:
             snapshot = {
@@ -944,7 +1157,8 @@ async def send_message(body: MessageCreate, user: dict = Depends(get_current_use
         "id": str(uuid.uuid4()),
         "from_user_id": user["id"],
         "to_user_id": body.to_user_id,
-        "text": body.text,
+        "text": body.text or "",
+        "image_base64": img,
         "recommended_item_id": body.recommended_item_id,
         "recommended_item_snapshot": snapshot,
         "created_at": utc_now(),
@@ -1781,6 +1995,37 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+@app.on_event("startup")
+async def startup_db_indexes():
+    """Performance + lookup indexes. Idempotent — safe on every reload."""
+    try:
+        await db.users.create_index("email", unique=True)
+        await db.users.create_index("username", unique=True, sparse=True)
+        await db.users.create_index("phone_hash", sparse=True)
+        await db.wardrobe.create_index([("user_id", 1), ("created_at", -1)])
+        await db.wardrobe.create_index([("user_id", 1), ("category", 1)])
+        await db.messages.create_index([("from_user_id", 1), ("to_user_id", 1), ("created_at", 1)])
+        await db.messages.create_index([("to_user_id", 1), ("created_at", -1)])
+        await db.friendships.create_index("user_ids")
+        await db.friendships.create_index([("user_ids", 1), ("status", 1)])
+        await db.wishlist.create_index([("user_id", 1), ("created_at", -1)])
+        await db.events.create_index([("user_id", 1), ("date", 1)])
+        await db.reminders.create_index([("user_id", 1), ("remind_at", 1)])
+        logger.info("startup: indexes ensured")
+    except Exception as e:  # noqa: BLE001
+        logger.warning("startup: index creation issue: %s", e)
+
+    # Backfill missing usernames for legacy users so search works for everyone.
+    try:
+        cursor = db.users.find({"$or": [{"username": {"$exists": False}}, {"username": None}]}, {"_id": 0, "id": 1, "name": 1})
+        async for u in cursor:
+            uname = await _generate_username(u.get("name") or "user")
+            await db.users.update_one({"id": u["id"]}, {"$set": {"username": uname}})
+        logger.info("startup: legacy usernames backfilled")
+    except Exception as e:  # noqa: BLE001
+        logger.warning("startup: username backfill issue: %s", e)
 
 
 @app.on_event("shutdown")
