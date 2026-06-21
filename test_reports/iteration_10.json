@@ -1,0 +1,26 @@
+{
+  "summary": "Regression VERIFIED for the stale wishlist-currency-pill fix in /app/frontend/src/hooks/useCurrency.ts (module-level emitter broadcasts setCurrency() to all useCurrency() subscribers). All 3 requested checks PASS end-to-end on mobile viewport (390x844) without any page reload: (1) After picking INR in Profile→Account→currency-setting-row picker and immediately tapping bottom-tab-wishlist, the wishlist-currency-pill reads 'Prices in INR' on first paint. (2) Adding a wishlist item with target_price=50 renders the card target as 'Target ₹4,716.50' (correct INR conversion via live rates). (3) Cleanup completed — switched back to USD; pill correctly shows 'Prices in USD'. No backend tests re-run (iteration_9 was 6/6 PASS and no backend code changed).",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [],
+    "react_native_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_currency.py (from iteration_9, unchanged)",
+    "/app/test_reports/iteration_9.json"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "useCurrency.ts emitter is implemented correctly: setCurrency() calls _notify() before persisting, and every hook instance subscribes via _listeners.add(handler) in useEffect mount and removes on unmount. _currentCode also seeds new hook instances with the latest known code, so a freshly-mounted Wishlist screen reads INR even before the profile fetch resolves.",
+    "Minor: the initial profile-fetch effect overwrites _currentCode with the server value but does NOT _notify() other listeners after that fetch. In practice this is fine because all mounted instances run their own profile fetch and converge to the same value, but if you ever add a screen that mounts long after login, a single _notify(resolved) inside that initial effect would keep it consistent."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "not re-run (iter9: 100% 6/6)", "frontend": "100% (3/3 regression checks)"},
+  "seed_data_creation": "Temp wishlist item 'TEST_item_currency' was created with target_price=50 and DELETED during the cleanup step. Currency on test@closetai.com left at USD.",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Stale-pill bug confirmed fixed. The fix uses a module-level Set<Listener> in useCurrency.ts, so any future change to currency state propagation should be checked across multiple mounted screens (Wishlist, Profile, Shop). Test recipe: login → Profile→Account→currency-setting-row → search 'indian' → tap currency-option-INR → tap bottom-tab-wishlist → expect wishlist-currency-pill text 'Prices in INR' WITHOUT reload. Note: the picker search matches on currency NAME, not code — 'United' returns nothing; use 'US Dollar', 'Indian', etc.",
+  "rca_of_issue": "ROOT CAUSE (now fixed): Each call to useCurrency() created its own isolated useState, so Profile's setCurrency() only updated Profile's local state. Wishlist's hook instance still held the stale code from its own first profile fetch. FIX: Module-level _listeners Set + _notify() broadcasts every setCurrency() to all mounted instances; every instance subscribes in its mount useEffect. Reproduction is no longer possible — verified by switching USD→INR on Profile and seeing Wishlist's pill update immediately on tab switch."
+}

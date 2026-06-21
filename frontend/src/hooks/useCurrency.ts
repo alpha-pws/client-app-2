@@ -1,5 +1,9 @@
 // Shared currency hook. Keeps the user's preferred currency in sync between
 // AsyncStorage (offline) and the server (StyleProfile.currency).
+//
+// All instances of this hook stay in sync via a tiny module-level emitter so
+// changing the currency in Profile → Account also immediately updates the
+// Wishlist tab without needing a screen reload.
 
 import { useCallback, useEffect, useState } from "react";
 import {
@@ -14,8 +18,22 @@ import {
 } from "@/src/utils/currency";
 import { api } from "@/src/api";
 
+// --- module-level singleton emitter ---
+type Listener = (code: string) => void;
+const _listeners = new Set<Listener>();
+let _currentCode = "USD";
+
+function _notify(next: string) {
+  _currentCode = next;
+  _listeners.forEach((l) => {
+    try {
+      l(next);
+    } catch {}
+  });
+}
+
 export function useCurrency() {
-  const [code, setCode] = useState<string>("USD");
+  const [code, setCode] = useState<string>(_currentCode);
   const [rates, setRates] = useState<RatesPacket | null>(null);
   const [loading, setLoading] = useState(true);
   const [ready, setReady] = useState(false);
@@ -33,6 +51,7 @@ export function useCurrency() {
       if (!resolved) resolved = detectDefaultCurrency();
       if (!alive) return;
       setCode(resolved);
+      _currentCode = resolved;
       await saveCurrency(resolved);
       try {
         const r = await loadRates("USD");
@@ -44,18 +63,22 @@ export function useCurrency() {
         }
       }
     })();
+    // subscribe to global changes
+    const handler: Listener = (next) => setCode(next);
+    _listeners.add(handler);
     return () => {
       alive = false;
+      _listeners.delete(handler);
     };
   }, []);
 
   const setCurrency = useCallback(async (next: string) => {
     setCode(next);
+    _notify(next);
     await saveCurrency(next);
     try {
       await api.updateProfile({ currency: next });
     } catch (e) {
-      // non-fatal; local pref still applies
       console.warn("[currency] failed to persist on server", e);
     }
   }, []);
