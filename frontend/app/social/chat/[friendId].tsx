@@ -1,4 +1,4 @@
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   ActivityIndicator,
   FlatList,
@@ -28,7 +28,26 @@ export default function Chat() {
   const [input, setInput] = useState("");
   const [sending, setSending] = useState(false);
   const [loading, setLoading] = useState(true);
+  const [friendName, setFriendName] = useState<string>(name || "");
   const listRef = useRef<FlatList<Message>>(null);
+
+  // Fallback: if we landed here without a `name` in params (e.g. deep link),
+  // resolve it from /friends so the header & empty-state aren't blank.
+  useEffect(() => {
+    if (name || !friendId) return;
+    let active = true;
+    api
+      .listFriends()
+      .then((fs) => {
+        if (!active) return;
+        const f = fs.find((x) => x.friend_user_id === friendId);
+        if (f) setFriendName(f.friend_name);
+      })
+      .catch(() => {});
+    return () => {
+      active = false;
+    };
+  }, [friendId, name]);
 
   const load = useCallback(async () => {
     if (!friendId) return;
@@ -142,7 +161,7 @@ export default function Chat() {
         <TouchableOpacity testID="chat-back" onPress={() => router.back()}>
           <Ionicons name="chevron-back" size={24} color={colors.primary} />
         </TouchableOpacity>
-        <Text style={styles.headerTitle}>{name || "Chat"}</Text>
+        <Text style={styles.headerTitle}>{friendName || name || "Chat"}</Text>
         <TouchableOpacity
           testID="view-friend-closet"
           onPress={() =>
@@ -163,7 +182,7 @@ export default function Chat() {
         ) : messages.length === 0 ? (
           <View style={styles.empty}>
             <Ionicons name="chatbubble-ellipses-outline" size={56} color={colors.subtle} />
-            <Text style={styles.emptyText}>Start the conversation with {name}.</Text>
+            <Text style={styles.emptyText}>Start the conversation with {friendName || name || "your friend"}.</Text>
           </View>
         ) : (
           <FlatList

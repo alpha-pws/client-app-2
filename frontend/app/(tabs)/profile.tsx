@@ -168,64 +168,6 @@ export default function Profile() {
         </ScrollView>
       )}
 
-      {/* Wishlist Add Modal */}
-      <Modal visible={showAdd} animationType="slide" transparent onRequestClose={() => setShowAdd(false)}>
-        <KeyboardAvoidingView
-          style={styles.modalBackdrop}
-          behavior={Platform.OS === "ios" ? "padding" : undefined}
-        >
-          <View style={styles.modalCard}>
-            <Text style={styles.modalTitle}>Add Wishlist Item</Text>
-            <TextInput
-              testID="wishlist-name-input"
-              value={wName}
-              onChangeText={setWName}
-              placeholder="Item name"
-              placeholderTextColor={colors.subtle}
-              style={styles.modalInput}
-            />
-            <TextInput
-              testID="wishlist-desc-input"
-              value={wDesc}
-              onChangeText={setWDesc}
-              placeholder="Description (color, size)"
-              placeholderTextColor={colors.subtle}
-              style={styles.modalInput}
-            />
-            <TextInput
-              testID="wishlist-price-input"
-              value={wPrice}
-              onChangeText={setWPrice}
-              keyboardType="numeric"
-              placeholder="Target price (USD)"
-              placeholderTextColor={colors.subtle}
-              style={styles.modalInput}
-            />
-            <TextInput
-              testID="wishlist-link-input"
-              value={wLink}
-              onChangeText={setWLink}
-              autoCapitalize="none"
-              placeholder="Link (optional)"
-              placeholderTextColor={colors.subtle}
-              style={styles.modalInput}
-            />
-            <View style={{ flexDirection: "row", gap: spacing.sm, marginTop: spacing.md }}>
-              <TouchableOpacity style={[styles.modalBtnGhost, { flex: 1 }]} onPress={() => setShowAdd(false)}>
-                <Text style={styles.modalBtnGhostText}>Cancel</Text>
-              </TouchableOpacity>
-              <TouchableOpacity
-                testID="wishlist-save-button"
-                style={[styles.modalBtn, { flex: 1 }]}
-                onPress={addWish}
-              >
-                <Text style={styles.modalBtnText}>Save</Text>
-              </TouchableOpacity>
-            </View>
-          </View>
-        </KeyboardAvoidingView>
-      </Modal>
-
       {/* Brand Add Modal */}
       <Modal
         visible={showBrandAdd}

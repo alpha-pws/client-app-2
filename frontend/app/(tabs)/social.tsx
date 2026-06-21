@@ -230,7 +230,7 @@ export default function Social() {
         {tab === "friends" && (
           <ScrollView contentContainerStyle={{ padding: spacing.xl, paddingBottom: 120 }}>
             <View style={styles.addBox}>
-              <Text style={styles.boxLabel}>ADD FRIEND BY EMAIL</Text>
+              <Text style={styles.boxLabel}>ADD FRIEND BY @USERNAME OR EMAIL</Text>
               <View style={styles.addRow}>
                 <TextInput
                   testID="add-friend-input"
