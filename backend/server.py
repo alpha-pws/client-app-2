@@ -21,7 +21,7 @@ from datetime import datetime, timezone, timedelta
 
 import resend
 import httpx
-from emergentintegrations.llm.chat import LlmChat, UserMessage, ImageContent
+from openai import AsyncOpenAI
 
 # ---------------------------------------------------------------------------
 # Setup
@@ -31,7 +31,7 @@ load_dotenv(ROOT_DIR / ".env")
 
 MONGO_URL = os.environ["MONGO_URL"]
 DB_NAME = os.environ["DB_NAME"]
-EMERGENT_LLM_KEY = os.environ["EMERGENT_LLM_KEY"]
+OPENAI_API_KEY = os.environ["OPENAI_API_KEY"]
 JWT_SECRET = os.environ["JWT_SECRET"]
 JWT_ALGORITHM = os.environ.get("JWT_ALGORITHM", "HS256")
 JWT_EXPIRY_DAYS = int(os.environ.get("JWT_EXPIRY_DAYS", "30"))
@@ -40,8 +40,9 @@ RESEND_FROM = os.environ.get("RESEND_FROM", "ClosetAI <onboarding@resend.dev>")
 APP_NAME = os.environ.get("APP_NAME", "ClosetAI")
 resend.api_key = RESEND_API_KEY
 
-LLM_MODEL_PROVIDER = "anthropic"
-LLM_MODEL_NAME = "claude-sonnet-4-6"
+LLM_MODEL_NAME = os.environ.get("OPENAI_MODEL", "gpt-4o")
+
+_openai_client = AsyncOpenAI(api_key=OPENAI_API_KEY)
 
 client = AsyncIOMotorClient(MONGO_URL)
 db = client[DB_NAME]
@@ -340,23 +341,24 @@ def user_to_public(user: dict) -> UserPublic:
 # ---------------------------------------------------------------------------
 # LLM helpers
 # ---------------------------------------------------------------------------
-def _make_chat(session_id: str, system_message: str) -> LlmChat:
-    return LlmChat(
-        api_key=EMERGENT_LLM_KEY,
-        session_id=session_id,
-        system_message=system_message,
-    ).with_model(LLM_MODEL_PROVIDER, LLM_MODEL_NAME)
-
-
-async def _llm_send(chat: LlmChat, user_msg: UserMessage) -> str:
-    # Run synchronous-blocking guard with a timeout
+async def _llm_complete(system_message: str, user_text: str) -> str:
     try:
-        return await asyncio.wait_for(chat.send_message(user_msg), timeout=90)
+        response = await asyncio.wait_for(
+            _openai_client.chat.completions.create(
+                model=LLM_MODEL_NAME,
+                messages=[
+                    {"role": "system", "content": system_message},
+                    {"role": "user", "content": user_text},
+                ],
+            ),
+            timeout=90,
+        )
     except asyncio.TimeoutError:
         raise HTTPException(status_code=504, detail="LLM request timed out")
     except Exception as e:  # surface to client
         logger.exception("LLM error")
         raise HTTPException(status_code=502, detail=f"LLM error: {str(e)[:200]}")
+    return response.choices[0].message.content or ""
 
 
 # ---------------------------------------------------------------------------
@@ -606,7 +608,6 @@ async def outfit_chat(body: OutfitChatBody, user: dict = Depends(get_current_use
     session_id = body.session_id or f"outfit-{user['id']}-{uuid.uuid4()}"
     ctx = await _build_context_for_user(user, body.lat, body.lon)
     system_msg = _build_system_message(user, ctx)
-    chat = _make_chat(session_id, system_msg)
     context_parts = []
     if body.weather:
         context_parts.append(f"User-stated weather override: {body.weather}")
@@ -614,7 +615,7 @@ async def outfit_chat(body: OutfitChatBody, user: dict = Depends(get_current_use
         context_parts.append(f"Occasion: {body.occasion}")
     context = "\n".join(context_parts)
     full_msg = f"{context}\n\nUser: {body.message}" if context else body.message
-    reply_text = await _llm_send(chat, UserMessage(text=full_msg))
+    reply_text = await _llm_complete(system_msg, full_msg)
     valid_ids = {it["id"] for it in (ctx["wardrobe"] or [])}
     rec_ids = _extract_item_ids(reply_text, valid_ids)
     await db.outfit_chats.insert_one({
@@ -703,8 +704,7 @@ async def compare_wishlist_prices(item_id: str, user: dict = Depends(get_current
         f"Description: {item.get('description') or 'n/a'}\n"
         f"{target}\n\nShopping sites to evaluate:\n{brand_text}"
     )
-    chat = _make_chat(f"price-{item_id}-{uuid.uuid4()}", PRICE_SYSTEM_PROMPT)
-    raw = await _llm_send(chat, UserMessage(text=user_msg))
+    raw = await _llm_complete(PRICE_SYSTEM_PROMPT, user_msg)
     # Parse JSON; tolerate code fences
     import json
     import re
@@ -809,7 +809,6 @@ async def suggest_event_outfit(event_id: str, user: dict = Depends(get_current_u
     wardrobe = await db.wardrobe.find({"user_id": user["id"]}, {"_id": 0}).to_list(500)
     wardrobe_text = _format_wardrobe_for_prompt(wardrobe)
     system_msg = OUTFIT_SYSTEM_PROMPT + f"\n\nUSER'S WARDROBE:\n{wardrobe_text}"
-    chat = _make_chat(f"event-{event_id}-{uuid.uuid4()}", system_msg)
     msg = (
         f"Suggest an outfit for this event:\n"
         f"Title: {event['title']}\n"
@@ -819,7 +818,7 @@ async def suggest_event_outfit(event_id: str, user: dict = Depends(get_current_u
         f"Description: {event.get('description') or 'n/a'}\n"
         f"List 2-4 specific items from the wardrobe by ITEM:<id> and explain in 2 sentences."
     )
-    reply = await _llm_send(chat, UserMessage(text=msg))
+    reply = await _llm_complete(system_msg, msg)
     import re
     rec_ids = list({m for m in re.findall(r"ITEM:([0-9a-fA-F-]{36})", reply)})
     valid_ids = {it["id"] for it in wardrobe}
@@ -1788,7 +1787,6 @@ async def outfit_generator(body: OutfitGenBody, user: dict = Depends(get_current
     session_id = f"gen-{user['id']}-{body.occasion}-{uuid.uuid4()}"
     pretty_occasion = body.occasion.replace("_", " ")
     sys = _build_system_message(user, ctx)
-    chat = _make_chat(session_id, sys)
     msg = (
         f"Compose one complete outfit for: {pretty_occasion}.\n"
         f"Use 3-5 pieces from the wardrobe. Reference each by ITEM:<id>. "
@@ -1796,7 +1794,7 @@ async def outfit_generator(body: OutfitGenBody, user: dict = Depends(get_current
     )
     if body.notes:
         msg += f"\nNotes: {body.notes}"
-    reply = await _llm_send(chat, UserMessage(text=msg))
+    reply = await _llm_complete(sys, msg)
     valid = {it["id"] for it in (ctx["wardrobe"] or [])}
     rec_ids = _extract_item_ids(reply, valid)
     return OutfitChatResponse(reply=reply, session_id=session_id, recommended_item_ids=rec_ids)
@@ -1814,7 +1812,6 @@ async def build_around_item(item_id: str, body: BuildAroundBody, user: dict = De
         extra=f"BUILD-AROUND ANCHOR ITEM: ITEM:{item['id']} ({item.get('category')}, {item.get('name') or 'unnamed'}, {item.get('color') or 'unknown color'}).",
     )
     session_id = f"build-{item_id}-{uuid.uuid4()}"
-    chat = _make_chat(session_id, sys)
     msg = (
         f"Generate 5 different complete outfits that all build around the anchor item above. "
         f"For each outfit, list 3-5 wardrobe pieces by ITEM:<id> and add a one-line stylist note. "
@@ -1822,7 +1819,7 @@ async def build_around_item(item_id: str, body: BuildAroundBody, user: dict = De
     )
     if body.notes:
         msg += f"\nNotes: {body.notes}"
-    reply = await _llm_send(chat, UserMessage(text=msg))
+    reply = await _llm_complete(sys, msg)
     valid = {it["id"] for it in (ctx["wardrobe"] or [])}
     rec_ids = _extract_item_ids(reply, valid)
     return {"reply": reply, "session_id": session_id, "anchor_item_id": item_id, "recommended_item_ids": rec_ids}
